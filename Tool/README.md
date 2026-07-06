@@ -1,35 +1,31 @@
-# Pokerogue Pokemon Creator
+# Pokerogue Pokemon Creator (Fixed)
 
-A comprehensive GUI tool for creating and customizing Pokemon for Pokerogue.
+**Quick Start:**
+1. Put your `dist` folder next to this file (or inside Tool/dist)
+2. Run **Launch.bat**
+3. App opens in browser at http://localhost:5173
 
-## Quick Start
+The audio files were moved — this Tool is now clean and independent.
 
-1. Download all files from this folder
-2. Run **Launch.bat** (or Launch.ps1)
-3. App opens in your browser!
+## Final Structure
 
-## Files
+```
+Tool/
+├── dist/                  (your existing built folder with assets/)
+├── Launch.bat
+├── Launch.bat.ps1
+├── index.html
+└── README.md
+```
 
-- `Launch.bat` - Windows launcher (recommended)
-- `Launch.ps1` - PowerShell version
-- `index.html` - Main app file
-- `assets/` - App resources
+## How to Apply
 
-## Features
+1. Delete old index.html, launcher.html, and any other loose junk in Tool.
+2. Create the 4 files above.
+3. Run Launch.bat from the Tool folder.
 
-- **Full Pokemon Customization**: Stats, abilities, types, evolutions, moves, held items
-- **Create New Pokemon**: Generate custom Pokemon with unique IDs (1026+)
-- **Quick Navigation**: Press A-Z to jump to Pokemon, 1-0 for tabs
-- **Export Code**: Generate TypeScript ready for Pokerogue integration
-
-## Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| A-Z | Jump to Pokemon |
-| 1-0 | Switch tabs |
-| Esc | Clear filter |
-
-## Tech Stack
-
-React 18 + TypeScript + Vite
+This version:
+- Automatically falls back to dist/ if present
+- Has better error handling
+- Points correctly to assets
+- Removes the old redundant launcher.html

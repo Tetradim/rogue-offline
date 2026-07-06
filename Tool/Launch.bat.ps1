@@ -1,6 +1,11 @@
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $scriptDir
 
+# Prefer serving from dist/ if it exists
+if (Test-Path "dist") {
+    Set-Location "dist"
+}
+
 $mimeMap = @{
     ".html" = "text/html"
     ".js"   = "application/javascript"
@@ -32,17 +37,13 @@ if (-not $listener) {
     exit 1
 }
 
-Write-Host "================================================"
-Write-Host "  Pokerogue Pokemon Creator"
-Write-Host "================================================"
-Write-Host "[OK] http://localhost:$port/"
+Write-Host "================================================" -ForegroundColor Green
+Write-Host "  Pokerogue Pokemon Creator (Fixed)" -ForegroundColor Green
+Write-Host "================================================" -ForegroundColor Green
+Write-Host "[OK] Running at http://localhost:$port/" -ForegroundColor Cyan
 Write-Host ""
 
 Start-Process "http://localhost:$port/"
-
-$desktop = [Environment]::GetFolderPath("Desktop")
-$shortcutPath = Join-Path $desktop "Pokerogue.url"
-"@([InternetShortcut]`nURL=http://localhost:$port/)" | Out-File $shortcutPath -Encoding UTF8
 
 try {
     while ($listener.IsListening) {
@@ -62,7 +63,6 @@ try {
             $response.OutputStream.Write($bytes, 0, $bytes.Length)
         } else {
             $response.StatusCode = 404
-            $response.OutputStream.Close()
         }
         $response.OutputStream.Close()
     }
