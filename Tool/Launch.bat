@@ -1,3 +1,3 @@
-# Pokerogue Pokemon Creator Launcher
-powershell -ExecutionPolicy Bypass -File "$PSCommandPath.ps1"
+@echo off
+powershell -ExecutionPolicy Bypass -File "%~dp0Launch.ps1"
 exit /b %errorlevel%
