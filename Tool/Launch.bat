@@ -7,15 +7,16 @@ echo   Pokerogue Pokemon Creator - Launcher v1.2
 echo ================================================
 echo.
 
+REM Run updater if present
 if exist "%~dp0Updater.ps1" (
-    echo [INFO] Running auto-updater...
+    echo [INFO] Checking for updates...
     powershell -ExecutionPolicy Bypass -File "%~dp0Updater.ps1"
     exit /b
 )
 
+REM Fallback if updater not found
 if not exist "%~dp0Launch.bat.ps1" (
     echo [ERROR] Launch.bat.ps1 not found!
-    echo Please ensure all files are extracted together.
     pause
     exit /b 1
 )
