@@ -1,31 +1,39 @@
-# Pokerogue Pokemon Creator (Fixed)
+# Pokerogue Pokemon Creator
 
 **Quick Start:**
-1. Put your `dist` folder next to this file (or inside Tool/dist)
-2. Run **Launch.bat**
-3. App opens in browser at http://localhost:5173
+1. Run **Launch.bat**
+2. App auto-updates and opens at http://localhost:5173
 
-The audio files were moved — this Tool is now clean and independent.
+## Features
 
-## Final Structure
+- **Auto-Updater**: Checks GitHub for updates on every launch
+- **Lightweight**: Downloads only changed files
+- **Offline Mode**: Works without internet connection
+
+## Structure
 
 ```
 Tool/
-├── dist/                  (your existing built folder with assets/)
-├── Launch.bat
-├── Launch.bat.ps1
-├── index.html
+├── dist/                  (application files)
+├── Launch.bat             (launcher with auto-update)
+├── Launch.bat.ps1         (HTTP server)
+├── Updater.ps1            (auto-updater script)
 └── README.md
 ```
 
-## How to Apply
+## Auto-Updater
 
-1. Delete old index.html, launcher.html, and any other loose junk in Tool.
-2. Create the 4 files above.
-3. Run Launch.bat from the Tool folder.
+The tool automatically checks for updates from:
+`https://github.com/Tetradim/rogue-offline/tree/move-audio-to-tetradim/Tool`
 
-This version:
-- Automatically falls back to dist/ if present
-- Has better error handling
-- Points correctly to assets
-- Removes the old redundant launcher.html
+On each launch:
+1. Compares local version with GitHub
+2. Downloads only changed files
+3. Launches the application
+
+## Troubleshooting
+
+**Updater fails?**
+- Check your internet connection
+- Try running as Administrator
+- The app will still work offline with current files
