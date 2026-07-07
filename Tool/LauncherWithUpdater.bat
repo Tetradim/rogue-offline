@@ -34,10 +34,14 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8080 ^| findstr LISTENING') 
     taskkill /F /PID %%a >nul 2>&1
 )
 
-echo Starting local server at http://localhost:8080
-echo Press Ctrl+C to stop the server.
-echo.
+REM Start server in a new window
+start "PokemonCreator Server" cmd /k "%PYCMD% -m http.server 8080"
 
-REM Start server and open browser
-start "" cmd /c "%PYCMD% -m http.server 8080 & timeout /t 2 >nul & start http://localhost:8080"
-%PYCMD% -m http.server 8080
+REM Wait a moment for server to start
+timeout /t 2 /nobreak >nul
+
+REM Open browser
+start http://localhost:8080
+
+REM Exit this script
+exit
