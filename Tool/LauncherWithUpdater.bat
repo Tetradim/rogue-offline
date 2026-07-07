@@ -1,0 +1,6 @@
+@echo off
+echo Running Updater first...
+powershell -ExecutionPolicy Bypass -File "Updater.ps1"
+
+echo Starting Pokerogue Pokemon Creator...
+start "" "index.html"
