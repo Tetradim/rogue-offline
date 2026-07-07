@@ -149,28 +149,38 @@ export default function App() {
             </div>
           </div>
           <div className="pokemon-list">
-            {filtered.map(p => (
-              <div
-                key={p.speciesNumber}
-                className={`pokemon-list-item ${selected?.speciesNumber === p.speciesNumber ? 'selected' : ''}`}
-                onClick={() => { setSelected(p); setMode('view') }}
-              >
-                <div className="pokemon-icon">{p.isLegendary || p.isMythical ? '\u2605' : '\u25CF'}</div>
-                <div className="pokemon-info">
-                  <div className="pokemon-name">{p.name}</div>
-                  <div className="pokemon-number">#{p.speciesNumber.toString().padStart(4, '0')}</div>
-                </div>
-                <div className="pokemon-types">
-                  <span className={`type-badge type-${p.primaryType}`}>{p.primaryType.substring(0, 3)}</span>
-                  {p.secondaryType && (
-                    <span className={`type-badge type-${p.secondaryType}`}>{p.secondaryType.substring(0, 3)}</span>
-                  )}
-                </div>
+            {loading ? (
+              <div style={{ padding: '16px', textAlign: 'center', color: '#94a3b8' }}>
+                Loading...
               </div>
-            ))}
+            ) : filtered.length === 0 ? (
+              <div style={{ padding: '16px', textAlign: 'center', color: '#94a3b8' }}>
+                No Pokemon match "{search || activeLetter}"
+              </div>
+            ) : (
+              filtered.map(p => (
+                <div
+                  key={p.speciesNumber}
+                  className={`pokemon-list-item ${selected?.speciesNumber === p.speciesNumber ? 'selected' : ''}`}
+                  onClick={() => { setSelected(p); setMode('view') }}
+                >
+                  <div className="pokemon-icon">{p.isLegendary || p.isMythical ? '\u2605' : '\u25CF'}</div>
+                  <div className="pokemon-info">
+                    <div className="pokemon-name">{p.name}</div>
+                    <div className="pokemon-number">#{p.speciesNumber.toString().padStart(4, '0')}</div>
+                  </div>
+                  <div className="pokemon-types">
+                    <span className={`type-badge type-${p.primaryType}`}>{p.primaryType.substring(0, 3)}</span>
+                    {p.secondaryType && (
+                      <span className={`type-badge type-${p.secondaryType}`}>{p.secondaryType.substring(0, 3)}</span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', fontSize: '12px', color: '#94a3b8' }}>
-            {pokemonList.length} Pokemon loaded
+            {loading ? 'Loading...' : `${pokemonList.length} Pokemon loaded`}
           </div>
         </aside>
 
@@ -254,16 +264,6 @@ export default function App() {
           )}
         </main>
       </div>
-      {loading && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', flexDirection: 'column', zIndex: 9999
-        }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>\u26A1</div>
-          <div style={{ color: 'white', fontSize: '18px' }}>Loading 1025 Pokemon...</div>
-        </div>
-      )}
     </div>
   )
 }
@@ -625,13 +625,23 @@ function SpritesTab({ pokemon, allPokemon, editable, updateField }) {
         <Field label="Sprite Key">
           <select className="form-select" value={pokemon.spriteKey || ''} disabled={!editable}
             onChange={e => updateField('spriteKey', e.target.value)}>
-            {allPokemon.map(p => <option key={p.speciesId} value={p.spriteKey}>{p.name}</option>)}
+            <option value="">-- Select --</option>
+            {allPokemon.map(p => (
+              <option key={p.speciesId} value={p.spriteKey}>
+                {p.name} ({p.spriteKey})
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Icon Key">
           <select className="form-select" value={pokemon.iconKey || ''} disabled={!editable}
             onChange={e => updateField('iconKey', e.target.value)}>
-            {allPokemon.map(p => <option key={p.speciesId} value={p.iconKey || p.spriteKey}>{p.name}</option>)}
+            <option value="">-- Select --</option>
+            {allPokemon.map(p => (
+              <option key={p.speciesId} value={p.iconKey || p.spriteKey}>
+                {p.name} ({p.iconKey || p.spriteKey})
+              </option>
+            ))}
           </select>
         </Field>
       </div>

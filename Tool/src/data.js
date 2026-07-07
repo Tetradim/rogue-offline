@@ -1,9 +1,8 @@
 // Pokerogue Pokemon Creator - seed data
-// Recovered from the shipped dist bundle (Tool/dist/assets) since no readable
-// source existed anywhere in the repo history. Schema extended with:
+// Schema:
 //   - `variant`            on the species itself (its own displayed variant)
 //   - `variant` per entry  inside `evolutions[]` (what that evolution stage displays as)
-//   - `forms[]`            now has a real shape (formKey/formName/spriteKey/iconKey/types/flags)
+//   - `forms[]`           has shape (formKey/formName/spriteKey/iconKey/types/flags)
 
 export const TYPES = [
   'NORMAL', 'FIRE', 'WATER', 'ELECTRIC', 'GRASS', 'ICE', 'FIGHTING', 'POISON',
