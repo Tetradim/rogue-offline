@@ -5,6 +5,17 @@ import {
   resolvedSpriteKey, variantLabel,
 } from './data.js'
 
+// Load full 1025 Pokemon from public JSON
+const loadPokemonData = async () => {
+  try {
+    const res = await fetch('./pokemon_data.json')
+    return await res.json()
+  } catch (e) {
+    console.error('Failed to load Pokemon data:', e)
+    return INITIAL_POKEMON_DATA
+  }
+}
+
 const TABS = [
   { id: 'basic', label: '1. Basic' },
   { id: 'types', label: '2. Types' },
@@ -39,6 +50,15 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('basic')
   const [search, setSearch] = useState('')
   const [activeLetter, setActiveLetter] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  // Load full Pokemon data on mount
+  useEffect(() => {
+    loadPokemonData().then(data => {
+      setPokemonList(data)
+      setLoading(false)
+    })
+  }, [])
 
   const filtered = pokemonList.filter(p => {
     const matchesSearch =
@@ -234,6 +254,16 @@ export default function App() {
           )}
         </main>
       </div>
+      {loading && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', flexDirection: 'column', zIndex: 9999
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>\u26A1</div>
+          <div style={{ color: 'white', fontSize: '18px' }}>Loading 1025 Pokemon...</div>
+        </div>
+      )}
     </div>
   )
 }
