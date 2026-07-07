@@ -1,36 +1,39 @@
 # Pokerogue Pokemon Creator
 
-A comprehensive GUI tool for creating and customizing Pokemon for Pokerogue.
+**Quick Start:**
+1. Run **Launch.bat**
+2. App auto-updates and opens at http://localhost:5173
 
 ## Features
 
-- **Full Pokemon Customization**: Edit all attributes (stats, abilities, types, evolutions, moves, etc.)
-- **Create New Pokemon**: Generate custom Pokemon with unique IDs (1026+)
-- **Quick Navigation**: Press A-Z to jump to Pokemon by name, 1-8 for tabs
-- **Export Code**: Generate TypeScript ready for Pokerogue integration
+- **Auto-Updater**: Checks GitHub for updates on every launch
+- **Lightweight**: Downloads only changed files
+- **Offline Mode**: Works without internet connection
 
-## Quick Start
+## Structure
 
-```bash
-npm install
-npm run dev    # Development
-npm run build  # Production build
+```
+Tool/
+├── dist/                  (application files)
+├── Launch.bat             (launcher with auto-update)
+├── Launch.bat.ps1         (HTTP server)
+├── Updater.ps1            (auto-updater script)
+└── README.md
 ```
 
-## Usage
+## Auto-Updater
 
-1. Click a Pokemon to view/edit
-2. Click "Edit" to modify values
-3. Click "Export" to download TypeScript code
+The tool automatically checks for updates from:
+`https://github.com/Tetradim/rogue-offline/tree/move-audio-to-tetradim/Tool`
 
-## Keyboard Shortcuts
+On each launch:
+1. Compares local version with GitHub
+2. Downloads only changed files
+3. Launches the application
 
-| Key | Action |
-|-----|--------|
-| A-Z | Jump to Pokemon starting with letter |
-| 1-8 | Switch editor tabs |
-| Esc | Clear filters |
+## Troubleshooting
 
-## Tech Stack
-
-React 18 + TypeScript + Vite
+**Updater fails?**
+- Check your internet connection
+- Try running as Administrator
+- The app will still work offline with current files
