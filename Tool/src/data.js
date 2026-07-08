@@ -14,6 +14,14 @@ export const GROWTH_RATES = [
   'ERRATIC', 'FLUCTUATING', 'MEDIUM_SLOW', 'MEDIUM_FAST', 'FAST', 'SLOW',
 ]
 
+export {
+  ABILITY_OPTIONS,
+  MOVE_OPTIONS,
+  BIOME_OPTIONS,
+  FORM_KEY_OPTIONS,
+  EVOLUTION_ITEM_OPTIONS,
+} from './options.generated.js'
+
 // Variant options selectable for a species' own display, or for what an
 // evolution stage turns into. Mutually exclusive per stage.
 export const VARIANT_OPTIONS = [

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   TYPES, GROWTH_RATES, VARIANT_OPTIONS,
+  ABILITY_OPTIONS, MOVE_OPTIONS, BIOME_OPTIONS, FORM_KEY_OPTIONS, EVOLUTION_ITEM_OPTIONS,
   INITIAL_POKEMON_DATA, createDefaultPokemon, createDefaultForm,
   resolvedSpriteKey, variantLabel,
 } from './data.js'
@@ -51,6 +52,9 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [activeLetter, setActiveLetter] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [showNewModal, setShowNewModal] = useState(false)
+  const [newPokemonNumber, setNewPokemonNumber] = useState(1026)
+  const [newPokemonName, setNewPokemonName] = useState('Custom Pokemon 1')
 
   // Load full Pokemon data on mount
   useEffect(() => {
@@ -89,11 +93,19 @@ export default function App() {
 
   const handleNewPokemon = () => {
     const maxNum = Math.max(...pokemonList.map(p => p.speciesNumber), 1025)
-    const created = createDefaultPokemon(maxNum + 1, `Custom Pokemon ${maxNum - 1024}`)
+    setNewPokemonNumber(maxNum + 1)
+    setNewPokemonName(`Custom Pokemon ${maxNum - 1024}`)
+    setShowNewModal(true)
+  }
+
+  const handleCreatePokemon = () => {
+    const speciesNumber = parseInt(newPokemonNumber) || 1026
+    const created = createDefaultPokemon(speciesNumber, newPokemonName.trim() || `Custom Pokemon ${speciesNumber}`)
     setPokemonList([...pokemonList, created])
     setSelected(created)
     setMode('edit')
     setActiveTab('basic')
+    setShowNewModal(false)
   }
 
   const handleSave = () => {
@@ -213,7 +225,12 @@ export default function App() {
                   <StatsTab pokemon={selected} editable={editable} updateStat={updateStat} />
                 )}
                 {activeTab === 'evolution' && (
-                  <EvolutionTab pokemon={selected} editable={editable} updateField={updateField} />
+                  <EvolutionTab
+                    pokemon={selected}
+                    allPokemon={pokemonList}
+                    editable={editable}
+                    updateField={updateField}
+                  />
                 )}
                 {activeTab === 'moves' && (
                   <MovesTab pokemon={selected} editable={editable} updateField={updateField} />
@@ -264,6 +281,17 @@ export default function App() {
           )}
         </main>
       </div>
+      {showNewModal && (
+        <NewPokemonModal
+          pokemonList={pokemonList}
+          speciesNumber={newPokemonNumber}
+          name={newPokemonName}
+          setSpeciesNumber={setNewPokemonNumber}
+          setName={setNewPokemonName}
+          onCreate={handleCreatePokemon}
+          onCancel={() => setShowNewModal(false)}
+        />
+      )}
     </div>
   )
 }
@@ -273,6 +301,99 @@ function Field({ label, children }) {
     <div className="form-group">
       <label className="form-label">{label}</label>
       {children}
+    </div>
+  )
+}
+
+function OptionInput({ value, options, disabled, placeholder, onChange, id }) {
+  return (
+    <>
+      <input
+        className="form-input"
+        type="text"
+        list={id}
+        value={value || ''}
+        disabled={disabled}
+        placeholder={placeholder}
+        onChange={e => onChange(e.target.value)}
+      />
+      <datalist id={id}>
+        {options.map(option => <option key={option} value={option} />)}
+      </datalist>
+    </>
+  )
+}
+
+function MultiOptionInput({ values, options, disabled, placeholder, onChange, id }) {
+  const [draft, setDraft] = useState('')
+  const selectedValues = values || []
+
+  const addValue = (value) => {
+    const normalized = value.trim().toUpperCase().replace(/\s+/g, '_')
+    if (!normalized || selectedValues.includes(normalized)) return
+    onChange([...selectedValues, normalized])
+    setDraft('')
+  }
+
+  return (
+    <div className="multi-picker">
+      <div className="multi-picker-row">
+        <OptionInput
+          id={id}
+          value={draft}
+          options={options}
+          disabled={disabled}
+          placeholder={placeholder}
+          onChange={setDraft}
+        />
+        <button className="btn btn-secondary" disabled={disabled || !draft.trim()} onClick={() => addValue(draft)}>
+          Add
+        </button>
+      </div>
+      <div className="pill-list">
+        {selectedValues.map(value => (
+          <span className="pill" key={value}>
+            {value}
+            {!disabled && (
+              <button onClick={() => onChange(selectedValues.filter(v => v !== value))} aria-label={`Remove ${value}`}>
+                x
+              </button>
+            )}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function NewPokemonModal({
+  pokemonList, speciesNumber, name, setSpeciesNumber, setName, onCreate, onCancel,
+}) {
+  const number = parseInt(speciesNumber) || 0
+  const existing = pokemonList.find(p => p.speciesNumber === number)
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="new-pokemon-title">
+      <div className="modal">
+        <h2 id="new-pokemon-title">New Pokemon</h2>
+        <div className="form-grid">
+          <Field label="Species Number">
+            <input className="form-input" type="number" min={1} value={speciesNumber}
+              onChange={e => setSpeciesNumber(e.target.value)} />
+          </Field>
+          <Field label="Name">
+            <input className="form-input" type="text" value={name}
+              onChange={e => setName(e.target.value)} />
+          </Field>
+        </div>
+        {existing && (
+          <p className="modal-warning">#{number} is already used by {existing.name}. Creating anyway will duplicate that number.</p>
+        )}
+        <div className="modal-actions">
+          <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-primary" onClick={onCreate}>Create</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -374,22 +495,22 @@ function AbilitiesTab({ pokemon, editable, updateField }) {
       <h3 className="form-section-title">Abilities</h3>
       <div className="form-grid">
         <Field label="Ability 1">
-          <input className="form-input" type="text" value={pokemon.ability1} disabled={!editable}
+          <OptionInput id="ability-1-options" value={pokemon.ability1} options={ABILITY_OPTIONS} disabled={!editable}
             placeholder="OVERGROW"
-            onChange={e => updateField('ability1', e.target.value.toUpperCase().replace(/\s+/g, '_'))} />
+            onChange={value => updateField('ability1', value.toUpperCase().replace(/\s+/g, '_'))} />
         </Field>
         <Field label="Ability 2">
-          <input className="form-input" type="text" value={pokemon.ability2 || ''} disabled={!editable}
+          <OptionInput id="ability-2-options" value={pokemon.ability2 || ''} options={ABILITY_OPTIONS} disabled={!editable}
             placeholder="CHLOROPHYLL"
-            onChange={e => updateField('ability2', e.target.value.toUpperCase().replace(/\s+/g, '_') || null)} />
+            onChange={value => updateField('ability2', value.toUpperCase().replace(/\s+/g, '_') || null)} />
         </Field>
         <Field label="Hidden Ability">
-          <input className="form-input" type="text" value={pokemon.hiddenAbility || ''} disabled={!editable}
-            onChange={e => updateField('hiddenAbility', e.target.value.toUpperCase().replace(/\s+/g, '_') || null)} />
+          <OptionInput id="hidden-ability-options" value={pokemon.hiddenAbility || ''} options={ABILITY_OPTIONS} disabled={!editable}
+            onChange={value => updateField('hiddenAbility', value.toUpperCase().replace(/\s+/g, '_') || null)} />
         </Field>
         <Field label="Passive Ability">
-          <input className="form-input" type="text" value={pokemon.passiveAbility || ''} disabled={!editable}
-            onChange={e => updateField('passiveAbility', e.target.value.toUpperCase().replace(/\s+/g, '_') || null)} />
+          <OptionInput id="passive-ability-options" value={pokemon.passiveAbility || ''} options={ABILITY_OPTIONS} disabled={!editable}
+            onChange={value => updateField('passiveAbility', value.toUpperCase().replace(/\s+/g, '_') || null)} />
         </Field>
       </div>
     </div>
@@ -415,8 +536,9 @@ function StatsTab({ pokemon, editable, updateStat }) {
   )
 }
 
-function EvolutionTab({ pokemon, editable, updateField }) {
+function EvolutionTab({ pokemon, allPokemon, editable, updateField }) {
   const evolutions = pokemon.evolutions || []
+  const speciesOptions = allPokemon.map(p => p.speciesId)
 
   const updateEvolution = (index, patch) => {
     const next = [...evolutions]
@@ -434,8 +556,8 @@ function EvolutionTab({ pokemon, editable, updateField }) {
 
       <div className="form-grid" style={{ marginBottom: '16px' }}>
         <Field label="Pre-Evolution">
-          <input className="form-input" type="text" value={pokemon.preEvolution || ''} disabled={!editable}
-            onChange={e => updateField('preEvolution', e.target.value.toLowerCase().replace(/\s+/g, '_') || null)} />
+          <OptionInput id="pre-evolution-options" value={pokemon.preEvolution || ''} options={speciesOptions} disabled={!editable}
+            onChange={value => updateField('preEvolution', value.toLowerCase().replace(/\s+/g, '_') || null)} />
         </Field>
         <Field label="This Pokemon's Variant">
           <select className="form-select" value={pokemon.variant || ''} disabled={!editable}
@@ -448,15 +570,18 @@ function EvolutionTab({ pokemon, editable, updateField }) {
       <div className="evolution-list">
         {evolutions.map((evo, i) => (
           <div className="evolution-item" key={i}>
-            <input className="form-input" type="text" placeholder="Species" value={evo.speciesId}
-              disabled={!editable}
-              onChange={e => updateEvolution(i, { speciesId: e.target.value.toLowerCase().replace(/\s+/g, '_') })} />
+            <OptionInput id={`evolution-species-options-${i}`} value={evo.speciesId} options={speciesOptions}
+              disabled={!editable} placeholder="Species"
+              onChange={value => updateEvolution(i, { speciesId: value.toLowerCase().replace(/\s+/g, '_') })} />
             <input className="form-input" type="number" placeholder="Level" style={{ width: '80px' }}
               value={evo.level || ''} disabled={!editable}
               onChange={e => updateEvolution(i, { level: parseInt(e.target.value) || undefined })} />
-            <input className="form-input" type="text" placeholder="Item" style={{ width: '120px' }}
-              value={evo.item || ''} disabled={!editable}
-              onChange={e => updateEvolution(i, { item: e.target.value.toUpperCase().replace(/\s+/g, '_') || undefined })} />
+            <OptionInput id={`evolution-item-options-${i}`} value={evo.item || ''} options={EVOLUTION_ITEM_OPTIONS}
+              disabled={!editable} placeholder="Item"
+              onChange={value => updateEvolution(i, { item: value.toUpperCase().replace(/\s+/g, '_') || undefined })} />
+            <OptionInput id={`evolution-form-options-${i}`} value={evo.formKey || ''} options={FORM_KEY_OPTIONS}
+              disabled={!editable} placeholder="Form Key"
+              onChange={value => updateEvolution(i, { formKey: value || undefined })} />
             <select className="form-select" style={{ width: '190px' }} value={evo.variant || ''} disabled={!editable}
               onChange={e => updateEvolution(i, { variant: e.target.value })}>
               {VARIANT_OPTIONS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
@@ -468,7 +593,7 @@ function EvolutionTab({ pokemon, editable, updateField }) {
         ))}
         {editable && (
           <button className="btn btn-secondary"
-            onClick={() => updateField('evolutions', [...evolutions, { speciesId: '', level: 1, variant: '' }])}>
+            onClick={() => updateField('evolutions', [...evolutions, { speciesId: '', level: 1, formKey: '', variant: '' }])}>
             + Add Evolution
           </button>
         )}
@@ -478,15 +603,14 @@ function EvolutionTab({ pokemon, editable, updateField }) {
 }
 
 function MovesTab({ pokemon, editable, updateField }) {
-  const levelUpText = Object.entries(pokemon.levelUpMoves || {})
-    .map(([level, move]) => `${level}:${move}`)
-    .join('\n')
+  const levelUpRows = Object.entries(pokemon.levelUpMoves || {})
+    .map(([level, move]) => ({ level: parseInt(level), move }))
+    .sort((a, b) => a.level - b.level)
 
-  const handleLevelUpChange = (text) => {
+  const updateLevelUpRows = (rows) => {
     const map = {}
-    text.split('\n').forEach(line => {
-      const [level, move] = line.split(':')
-      if (level && move) map[parseInt(level)] = move.trim().toUpperCase()
+    rows.forEach(row => {
+      if (row.level && row.move) map[row.level] = row.move.trim().toUpperCase().replace(/\s+/g, '_')
     })
     updateField('levelUpMoves', map)
   }
@@ -496,19 +620,51 @@ function MovesTab({ pokemon, editable, updateField }) {
       <h3 className="form-section-title">Moves</h3>
       <div className="form-grid">
         <div className="form-group full-width">
-          <label className="form-label">Level-Up Moves (level:moveId)</label>
-          <textarea className="form-input" rows={6} value={levelUpText} disabled={!editable}
-            onChange={e => handleLevelUpChange(e.target.value)} />
+          <label className="form-label">Level-Up Moves</label>
+          <div className="move-list">
+            {levelUpRows.map((row, i) => (
+              <div className="move-row" key={`${row.level}-${row.move}-${i}`}>
+                <input className="form-input" type="number" min={1} value={row.level} disabled={!editable}
+                  onChange={e => {
+                    const next = [...levelUpRows]
+                    next[i] = { ...row, level: parseInt(e.target.value) || 1 }
+                    updateLevelUpRows(next)
+                  }} />
+                <OptionInput id={`level-move-options-${i}`} value={row.move} options={MOVE_OPTIONS} disabled={!editable}
+                  placeholder="TACKLE"
+                  onChange={value => {
+                    const next = [...levelUpRows]
+                    next[i] = { ...row, move: value.toUpperCase().replace(/\s+/g, '_') }
+                    updateLevelUpRows(next)
+                  }} />
+                {editable && (
+                  <button className="btn btn-danger" onClick={() => updateLevelUpRows(levelUpRows.filter((_, idx) => idx !== i))}>
+                    Remove
+                  </button>
+                )}
+              </div>
+            ))}
+            {editable && (
+              <button className="btn btn-secondary" onClick={() => updateLevelUpRows([...levelUpRows, { level: 1, move: 'TACKLE' }])}>
+                + Add Move
+              </button>
+            )}
+            {levelUpRows.length === 0 && !editable && (
+              <p style={{ color: '#94a3b8' }}>No level-up moves defined.</p>
+            )}
+          </div>
         </div>
         <div className="form-group full-width">
-          <label className="form-label">TM Pool (comma-separated)</label>
-          <input className="form-input" type="text" value={(pokemon.tmPool || []).join(', ')} disabled={!editable}
-            onChange={e => updateField('tmPool', e.target.value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean))} />
+          <label className="form-label">TM Pool</label>
+          <MultiOptionInput id="tm-pool-options" values={pokemon.tmPool || []} options={MOVE_OPTIONS} disabled={!editable}
+            placeholder="THUNDERBOLT"
+            onChange={values => updateField('tmPool', values)} />
         </div>
         <div className="form-group full-width">
           <label className="form-label">Egg Moves</label>
-          <input className="form-input" type="text" value={(pokemon.eggMoves || []).join(', ')} disabled={!editable}
-            onChange={e => updateField('eggMoves', e.target.value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean))} />
+          <MultiOptionInput id="egg-move-options" values={pokemon.eggMoves || []} options={MOVE_OPTIONS} disabled={!editable}
+            placeholder="ANCIENT_POWER"
+            onChange={values => updateField('eggMoves', values)} />
         </div>
       </div>
     </div>
@@ -545,9 +701,9 @@ function FormsTab({ pokemon, editable, updateField }) {
           <div key={i} className="form-section" style={{ padding: '16px', marginBottom: 0 }}>
             <div className="form-grid">
               <Field label="Form Key">
-                <input className="form-input" type="text" value={form.formKey} disabled={!editable}
+                <OptionInput id={`form-key-options-${i}`} value={form.formKey} options={FORM_KEY_OPTIONS} disabled={!editable}
                   placeholder="alolan"
-                  onChange={e => updateForm(i, { formKey: e.target.value.toLowerCase().replace(/\s+/g, '_') })} />
+                  onChange={value => updateForm(i, { formKey: value.toLowerCase().replace(/\s+/g, '_') })} />
               </Field>
               <Field label="Form Name">
                 <input className="form-input" type="text" value={form.formName} disabled={!editable}
@@ -678,6 +834,7 @@ function SpritesTab({ pokemon, allPokemon, editable, updateField }) {
                 LV {evo.level || '\u2014'}{evo.item ? ` / ${evo.item}` : ''}
               </span>
               <span style={{ flex: 1 }}>{evoSpecies ? evoSpecies.name : (evo.speciesId || '(unset)')}</span>
+              <span style={{ color: '#94a3b8' }}>{evo.formKey || 'base'}</span>
               <span style={{ color: '#94a3b8' }}>{variantLabel(evo.variant)}</span>
               <code>{resolvedSpriteKey(baseSpriteKey, evo.variant)}</code>
             </div>
@@ -695,13 +852,15 @@ function PassivesTab({ pokemon, editable, updateField }) {
       <div className="form-grid">
         <div className="form-group full-width">
           <label className="form-label">Passive Abilities</label>
-          <input className="form-input" type="text" value={(pokemon.passives || []).join(', ')} disabled={!editable}
-            onChange={e => updateField('passives', e.target.value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean))} />
+          <MultiOptionInput id="passive-list-options" values={pokemon.passives || []} options={ABILITY_OPTIONS} disabled={!editable}
+            placeholder="OVERGROW"
+            onChange={values => updateField('passives', values)} />
         </div>
         <div className="form-group full-width">
           <label className="form-label">Spawn Biomes</label>
-          <input className="form-input" type="text" value={(pokemon.biomes || []).join(', ')} disabled={!editable}
-            onChange={e => updateField('biomes', e.target.value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean))} />
+          <MultiOptionInput id="biome-options" values={pokemon.biomes || []} options={BIOME_OPTIONS} disabled={!editable}
+            placeholder="FOREST"
+            onChange={values => updateField('biomes', values)} />
         </div>
         <Field label="Min Level">
           <input className="form-input" type="number" value={pokemon.spawnLevels.min} disabled={!editable}
