@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   TYPES, GROWTH_RATES, VARIANT_OPTIONS,
-  ABILITY_OPTIONS, MOVE_OPTIONS, BIOME_OPTIONS, FORM_KEY_OPTIONS, EVOLUTION_ITEM_OPTIONS,
+  ABILITY_OPTIONS, MOVE_OPTIONS, BIOME_OPTIONS, FORM_KEY_OPTIONS, ITEM_OPTIONS,
   INITIAL_POKEMON_DATA, createDefaultPokemon, createDefaultForm,
   resolvedSpriteKey, variantLabel,
 } from './data.js'
@@ -45,14 +45,14 @@ function downloadPokemon(pokemon) {
 }
 
 // Pokémon Number Picker Modal
-function PokemonNumberPicker({ isOpen, onClose, onSelect, currentNumber }) {
+function PokemonNumberPicker({ isOpen, onClose, onSelect, currentNumber, pokemonList }) {
   const [search, setSearch] = useState('')
   const [selectedNumber, setSelectedNumber] = useState(currentNumber)
   
   if (!isOpen) return null
   
   const handleNumberSelect = (number) => {
-    setSelectedNumber(number)
+    setNewPokemonNumber(number)
   }
   
   const handleConfirm = () => {
@@ -60,7 +60,7 @@ function PokemonNumberPicker({ isOpen, onClose, onSelect, currentNumber }) {
     onClose()
   }
   
-  const filteredPokemon = pokemonList.filter(p => {
+  const filteredPokemon = (pokemonList || []).filter(p => {
     const matchesSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.speciesId.toLowerCase().includes(search.toLowerCase()) ||
@@ -102,7 +102,6 @@ function PokemonNumberPicker({ isOpen, onClose, onSelect, currentNumber }) {
 }
 
 export default function App() {
-  const [pokemonList, setPokemonList] = useState(INITIAL_POKEMON_DATA)
   const [selected, setSelected] = useState(null)
   const [mode, setMode] = useState('view') // 'view' | 'edit'
   const [activeTab, setActiveTab] = useState('basic')
@@ -125,6 +124,7 @@ export default function App() {
   }, [])
 
   const filtered = pokemonList.filter(p => {
+    if (!pokemonList) return [];
     const matchesSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.speciesId.toLowerCase().includes(search.toLowerCase())
@@ -187,6 +187,10 @@ export default function App() {
   }
 
   const editable = mode === 'edit'
+
+  if (loading) {
+    return <div className="loading">Loading Pokémon data...</div>
+  }
 
   return (
     <div className="app">
@@ -273,7 +277,7 @@ export default function App() {
 
               <div className="editor-content">
                 {activeTab === 'basic' && (
-                  <BasicTab pokemon={selected} editable={editable} updateField={updateField} onShowNumberPicker={() => setShowNumberPicker(true)} />
+                  <BasicTab pokemon={selected} editable={editable} updateField={updateField} onShowNumberPicker={() => setShowNumberPicker(true)} pokemonList={pokemonList} />
                 )}
                 {activeTab === 'types' && (
                   <TypesTab pokemon={selected} editable={editable} updateField={updateField} />
@@ -356,8 +360,11 @@ export default function App() {
         <PokemonNumberPicker
           isOpen={showNumberPicker}
           onClose={() => setShowNumberPicker(false)}
-          onSelect={num => { updateField('speciesNumber', num); setShowNumberPicker(false) }}
-          currentNumber={selected?.speciesNumber}
+          onSelect={(num) => {
+            if (selected) updateField('speciesNumber', num)
+            setShowNumberPicker(false)
+          }}
+          currentNumber={selected?.speciesNumber || 1}
           pokemonList={pokemonList}
         />
       )}
@@ -516,7 +523,7 @@ function NewPokemonModal({
   )
 }
 
-function BasicTab({ pokemon, editable, updateField, onShowNumberPicker }) {
+function BasicTab({ pokemon, editable, updateField, onShowNumberPicker, pokemonList }) {
   return (
     <div className="form-section">
       <h3 className="form-section-title">Basic Information</h3>
@@ -534,7 +541,7 @@ function BasicTab({ pokemon, editable, updateField, onShowNumberPicker }) {
             <input className="form-input" type="number" value={pokemon.speciesNumber} disabled={!editable}
               onChange={e => updateField('speciesNumber', parseInt(e.target.value) || 0)} style={{flex: 1}} />
             {editable && (
-              <button onClick={onShowNumberPicker} className="icon-button" title="Browse all Pokemon">🔍</button>
+              <button onClick={() => onShowNumberPicker(pokemonList)} className="icon-button" title="Browse all Pokemon">🔍</button>
             )}
           </div>
         </Field>
