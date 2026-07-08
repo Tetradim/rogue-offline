@@ -108,6 +108,7 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [activeLetter, setActiveLetter] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [showNewModal, setShowNewModal] = useState(false)
   const [showNumberPicker, setShowNumberPicker] = useState(false)
   const [newPokemonNumber, setNewPokemonNumber] = useState(1026)
@@ -119,6 +120,9 @@ export default function App() {
   useEffect(() => {
     loadPokemonData().then(data => {
       setPokemonList(data)
+      setLoading(false)
+    }).catch(error => {
+      setError('Failed to load Pokemon data. Please check your connection.')
       setLoading(false)
     })
   }, [])
@@ -190,6 +194,10 @@ export default function App() {
 
   if (loading) {
     return <div className="loading">Loading Pokémon data...</div>
+  }
+  
+  if (error) {
+    return <div className="error">Error: {error}</div>
   }
 
   return (
