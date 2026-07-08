@@ -35,13 +35,22 @@ function downloadPokemon(pokemon) {
   const content =
     `// Custom Pokemon: ${pokemon.name}\n` +
     `export const ${constName} = ${JSON.stringify(pokemon, null, 2)};\n`
-  const blob = new Blob([content], { type: 'text/plain' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${pokemon.speciesId}.ts`
-  a.click()
-  URL.revokeObjectURL(url)
+  let url = null
+  try {
+    const blob = new Blob([content], { type: 'text/plain' })
+    url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${pokemon.speciesId}.ts`
+    // Append to body to ensure it works in Firefox
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  } finally {
+    if (url) {
+      URL.revokeObjectURL(url)
+    }
+  }
 }
 
 // Pokémon Number Picker Modal
