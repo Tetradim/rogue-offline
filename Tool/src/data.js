@@ -14,13 +14,67 @@ export const GROWTH_RATES = [
   'ERRATIC', 'FLUCTUATING', 'MEDIUM_SLOW', 'MEDIUM_FAST', 'FAST', 'SLOW',
 ]
 
+// Import all option lists from the generated file
 export {
   ABILITY_OPTIONS,
   MOVE_OPTIONS,
   BIOME_OPTIONS,
   FORM_KEY_OPTIONS,
   EVOLUTION_ITEM_OPTIONS,
-} from './options.generated.js'
+} from './options.generated.js';
+
+// Passive ability options (from Pokerogue source)
+export const PASSIVE_OPTIONS = [
+  "NONE",
+  "ABILITY",
+  "CRITICAL_HIT",
+  "EXP_SHARE",
+  "RECIPE",
+  "MONEY",
+  "ENCOUNTER",
+  "STEALTH",
+  "EFFECT_SPIKES",
+  "BERRY",
+  "REVIVER",
+  "ROAMING",
+  "SHINY",
+  "HATCHER",
+  "HATCHER_M",
+  "HIDDEN_ABILITY",
+  "IV_SPREAD",
+  "RARE_ITEM",
+  "FORAGE",
+  "FRESH",
+  "HONEY",
+  "DAMAGE",
+  "HARVEST",
+  "MERCY",
+  "EXP_BALANCE",
+  "DISABLE_BOSS",
+  "SPAWN_MASTER",
+  "SPAWN_MASTER_M",
+  "SHINY_M",
+  "IV_SPREAD_M",
+  "RARE_ITEM_M",
+  "FORAGE_M",
+  "FRESH_M",
+  "HONEY_M",
+  "DAMAGE_M",
+  "HARVEST_M",
+  "MERCY_M",
+  "ABILITY_M",
+  "CRITICAL_HIT_M",
+  "MONEY_M",
+  "BERRY_M",
+  "RECIPE_M",
+  "REVIVER_M",
+  "ROAMING_M",
+  "EFFECT_SPIKES_M",
+  "ENCOUNTER_M",
+  "EXP_SHARE_M",
+  "EXP_BALANCE_M",
+  "DISABLE_BOSS_M",
+];
 
 // Variant options selectable for a species' own display, or for what an
 // evolution stage turns into. Mutually exclusive per stage.

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   TYPES, GROWTH_RATES, VARIANT_OPTIONS,
   ABILITY_OPTIONS, MOVE_OPTIONS, BIOME_OPTIONS, FORM_KEY_OPTIONS, EVOLUTION_ITEM_OPTIONS,
@@ -44,6 +44,63 @@ function downloadPokemon(pokemon) {
   URL.revokeObjectURL(url)
 }
 
+// Pokémon Number Picker Modal
+function PokemonNumberPicker({ isOpen, onClose, onSelect, currentNumber }) {
+  const [search, setSearch] = useState('')
+  const [selectedNumber, setSelectedNumber] = useState(currentNumber)
+  
+  if (!isOpen) return null
+  
+  const handleNumberSelect = (number) => {
+    setSelectedNumber(number)
+  }
+  
+  const handleConfirm = () => {
+    onSelect(selectedNumber)
+    onClose()
+  }
+  
+  const filteredPokemon = pokemonList.filter(p => {
+    const matchesSearch =
+      p.name.toLowerCase().includes(search.toLowerCase()) ||
+      p.speciesId.toLowerCase().includes(search.toLowerCase()) ||
+      p.speciesNumber.toString().includes(search)
+    return matchesSearch
+  }).sort((a, b) => a.speciesNumber - b.speciesNumber)
+  
+  return (
+    <div className="modal-overlay">
+      <div className="modal">
+        <h2>Select Pokémon Number</h2>
+        <input
+          type="text"
+          placeholder="Search by name, ID, or number..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="search-input"
+        />
+        <div className="number-picker-grid">
+          {filteredPokemon.map(p => (
+            <div
+              key={p.speciesId}
+              className={`number-picker-item ${selectedNumber === p.speciesNumber ? 'selected' : ''}`}
+              onClick={() => handleNumberSelect(p.speciesNumber)}
+            >
+              <span className="number">{p.speciesNumber}</span>
+              <span className="name">{p.name}</span>
+              <span className="id">{p.speciesId}</span>
+            </div>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button onClick={onClose}>Cancel</button>
+          <button onClick={handleConfirm} className="primary">Confirm</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [pokemonList, setPokemonList] = useState(INITIAL_POKEMON_DATA)
   const [selected, setSelected] = useState(null)
@@ -53,8 +110,11 @@ export default function App() {
   const [activeLetter, setActiveLetter] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showNewModal, setShowNewModal] = useState(false)
+  const [showNumberPicker, setShowNumberPicker] = useState(false)
   const [newPokemonNumber, setNewPokemonNumber] = useState(1026)
   const [newPokemonName, setNewPokemonName] = useState('Custom Pokemon 1')
+  const [selectedEvolutionIndex, setSelectedEvolutionIndex] = useState(null)
+  const [selectedFormKey, setSelectedFormKey] = useState('')
 
   // Load full Pokemon data on mount
   useEffect(() => {
@@ -213,7 +273,7 @@ export default function App() {
 
               <div className="editor-content">
                 {activeTab === 'basic' && (
-                  <BasicTab pokemon={selected} editable={editable} updateField={updateField} />
+                  <BasicTab pokemon={selected} editable={editable} updateField={updateField} onShowNumberPicker={() => setShowNumberPicker(true)} />
                 )}
                 {activeTab === 'types' && (
                   <TypesTab pokemon={selected} editable={editable} updateField={updateField} />
@@ -292,6 +352,15 @@ export default function App() {
           onCancel={() => setShowNewModal(false)}
         />
       )}
+      {showNumberPicker && (
+        <PokemonNumberPicker
+          isOpen={showNumberPicker}
+          onClose={() => setShowNumberPicker(false)}
+          onSelect={num => { updateField('speciesNumber', num); setShowNumberPicker(false) }}
+          currentNumber={selected?.speciesNumber}
+          pokemonList={pokemonList}
+        />
+      )}
     </div>
   )
 }
@@ -321,6 +390,55 @@ function OptionInput({ value, options, disabled, placeholder, onChange, id }) {
         {options.map(option => <option key={option} value={option} />)}
       </datalist>
     </>
+  )
+}
+
+// Shared dropdown-style multi-select (click to add/remove from a select-like popover)
+function MultiDropdown({ values, options, disabled, placeholder, onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const toggle = (val) => {
+    const cur = values || []
+    onChange(cur.includes(val) ? cur.filter(v => v !== val) : [...cur, val])
+  }
+
+  return (
+    <div className="multi-dropdown" ref={ref}>
+      <div className="multi-dropdown-display" onClick={() => !disabled && setOpen(o => !o)}>
+        {values && values.length > 0
+          ? values.map(v => (
+              <span key={v} className="pill">
+                {v}
+                {!disabled && <button onClick={e => { e.stopPropagation(); toggle(v) }}>x</button>}
+              </span>
+            ))
+          : <span className="multi-dropdown-placeholder">{placeholder || 'Select...'}</span>
+        }
+        {!disabled && <span className="multi-dropdown-chevron">{open ? '\u25B2' : '\u25BC'}</span>}
+      </div>
+      {open && (
+        <div className="multi-dropdown-menu">
+          {options.map(opt => {
+            const active = values && values.includes(opt.value)
+            return (
+              <div key={opt.value} className={`multi-dropdown-item ${active ? 'active' : ''}`}
+                onClick={() => toggle(opt.value)}>
+                <span className="multi-dropdown-check">{active ? '\u2713' : ''}</span>
+                {opt.label}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -398,7 +516,7 @@ function NewPokemonModal({
   )
 }
 
-function BasicTab({ pokemon, editable, updateField }) {
+function BasicTab({ pokemon, editable, updateField, onShowNumberPicker }) {
   return (
     <div className="form-section">
       <h3 className="form-section-title">Basic Information</h3>
@@ -412,8 +530,13 @@ function BasicTab({ pokemon, editable, updateField }) {
             onChange={e => updateField('name', e.target.value)} />
         </Field>
         <Field label="Species Number">
-          <input className="form-input" type="number" value={pokemon.speciesNumber} disabled={!editable}
-            onChange={e => updateField('speciesNumber', parseInt(e.target.value) || 0)} />
+          <div style={{display: 'flex', gap: '8px'}}>
+            <input className="form-input" type="number" value={pokemon.speciesNumber} disabled={!editable}
+              onChange={e => updateField('speciesNumber', parseInt(e.target.value) || 0)} style={{flex: 1}} />
+            {editable && (
+              <button onClick={onShowNumberPicker} className="icon-button" title="Browse all Pokemon">🔍</button>
+            )}
+          </div>
         </Field>
         <Field label="Category">
           <input className="form-input" type="text" value={pokemon.category} disabled={!editable}
@@ -852,9 +975,16 @@ function PassivesTab({ pokemon, editable, updateField }) {
       <div className="form-grid">
         <div className="form-group full-width">
           <label className="form-label">Passive Abilities</label>
-          <MultiOptionInput id="passive-list-options" values={pokemon.passives || []} options={ABILITY_OPTIONS} disabled={!editable}
-            placeholder="OVERGROW"
-            onChange={values => updateField('passives', values)} />
+          <MultiDropdown
+            values={pokemon.passives || []}
+            options={ABILITY_OPTIONS.map(ability => ({
+              value: ability,
+              label: ability.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase())
+            }))}
+            disabled={!editable}
+            placeholder="Overgrow"
+            onChange={values => updateField('passives', values)}
+          />
         </div>
         <div className="form-group full-width">
           <label className="form-label">Spawn Biomes</label>
