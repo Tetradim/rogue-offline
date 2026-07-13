@@ -1,0 +1,21 @@
+{
+  "name": "pokerogue-pokemon-creator",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --open /dev.html",
+    "build": "vite build",
+    "postbuild": "node postbuild.js",
+    "preview": "vite preview",
+    "check-installer": "node --check pokerogue-mod-installer.cjs"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "vite": "^6.0.0"
+  }
+}
