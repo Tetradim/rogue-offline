@@ -1,9 +1,9 @@
 # PokéRogue Mod Studio: Showdown-Inspired Redesign
 
-Status: Approved design awaiting written-spec review  
-Date: 2026-07-13  
-Platform: Windows  
-Baseline: PokéRogue Mod Studio 1.0.0
+- Status: Approved design awaiting written-spec review
+- Date: 2026-07-13
+- Platform: Windows
+- Baseline: PokéRogue Mod Studio 1.0.0
 
 ## 1. Summary
 
@@ -496,4 +496,3 @@ The redesign is complete when all of the following are true:
 The redesign will be implemented in the imported PokéRogue Mod Studio repository while preserving the original ZIP unchanged.
 
 The first stable release will include the Windows launcher, local service, React interface, portable project schema, migration support, shared package installer, fixture suite, and user documentation. Cross-platform packaging, cloud features, media editing, and speculative patching of unknown layouts remain outside this release.
-
