@@ -1,6 +1,15 @@
 // @vitest-environment node
 
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -69,6 +78,56 @@ describe('project filesystem utilities', () => {
       '999999.json',
       'notes.json',
     ])
+  })
+
+  it('syncs and closes the atomic temp file before renaming it', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    const filePath = path.join(parentDir, 'project.json')
+    const events = []
+
+    await writeJsonAtomic(filePath, { name: 'Ember Line' }, {
+      fileSystem: {
+        open: async (...args) => {
+          const handle = await open(...args)
+          return {
+            writeFile: async (...writeArgs) => {
+              events.push('write')
+              return handle.writeFile(...writeArgs)
+            },
+            sync: async () => {
+              events.push('sync')
+              return handle.sync()
+            },
+            close: async () => {
+              events.push('close')
+              return handle.close()
+            },
+          }
+        },
+        rename: async (...args) => {
+          events.push('rename')
+          return rename(...args)
+        },
+      },
+    })
+
+    expect(events).toEqual(['write', 'sync', 'close', 'rename'])
+  })
+
+  it('cleans up its temp sibling when the atomic rename fails', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    const filePath = path.join(parentDir, 'project.json')
+    const renameError = new Error('rename failed')
+
+    await expect(writeJsonAtomic(filePath, { name: 'Ember Line' }, {
+      fileSystem: {
+        rename: async () => {
+          throw renameError
+        },
+      },
+    })).rejects.toBe(renameError)
+
+    await expect(readdir(parentDir)).resolves.toEqual([])
   })
 })
 
@@ -187,8 +246,14 @@ describe('portable project repository', () => {
     'nul',
     'COM1',
     'com9.log',
+    'COM¹',
+    'com².txt',
+    'COM³',
     'LPT1',
     'lpt9.txt',
+    'LPT¹',
+    'lpt².log',
+    'LPT³',
   ])('rejects a Windows-invalid or reserved project folder name: %j', async name => {
     const parentDir = await makeTemporaryDirectory()
     const repository = createProjectRepository()
@@ -265,6 +330,144 @@ describe('portable project repository', () => {
     await expect(repository.save(created.projectDir, staleDraft)).rejects.toThrow(/stale/i)
     await expect(readFile(canonicalPath, 'utf8')).resolves.toBe(canonicalAfterFirstSave)
     expect((await readdir(autosaveDir)).sort()).toEqual(autosavesAfterFirstSave)
+  })
+
+  it('serializes overlapping saves so exactly one same-revision draft commits', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    let releaseFirstRead
+    const firstReadGate = new Promise(resolve => {
+      releaseFirstRead = resolve
+    })
+    let markFirstReadStarted
+    const firstReadStarted = new Promise(resolve => {
+      markFirstReadStarted = resolve
+    })
+    let canonicalReads = 0
+    const fileSystem = {
+      mkdir,
+      rm,
+      readFile: async (filePath, ...args) => {
+        if (path.basename(filePath) === 'project.json') {
+          canonicalReads += 1
+          if (canonicalReads === 1) {
+            markFirstReadStarted()
+            await firstReadGate
+          }
+        }
+        return readFile(filePath, ...args)
+      },
+    }
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: makeIdFactory(),
+      fileSystem,
+    })
+    const created = await repository.create({ parentDir, name: 'Ember Line' })
+    const firstDraft = { ...structuredClone(created.project), name: 'First Concurrent Save' }
+    const secondDraft = { ...structuredClone(created.project), name: 'Second Concurrent Save' }
+
+    const firstSave = repository.save(created.projectDir, firstDraft)
+    await firstReadStarted
+    const secondSave = repository.save(created.projectDir, secondDraft)
+    await new Promise(resolve => setImmediate(resolve))
+    releaseFirstRead()
+    const results = await Promise.allSettled([firstSave, secondSave])
+
+    const fulfilled = results.filter(result => result.status === 'fulfilled')
+    const rejected = results.filter(result => result.status === 'rejected')
+    expect(fulfilled).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0].reason.message).toMatch(/stale/i)
+    expect(fulfilled[0].value.project.name).toBe('First Concurrent Save')
+    expect(canonicalReads).toBe(2)
+
+    const winner = fulfilled[0].value.project
+    const canonical = JSON.parse(await readFile(path.join(created.projectDir, 'project.json'), 'utf8'))
+    const autosaveDir = path.join(created.projectDir, '.studio', 'autosaves')
+    const acceptedAutosave = JSON.parse(await readFile(path.join(autosaveDir, '000002.json'), 'utf8'))
+    expect(canonical).toEqual(winner)
+    expect(acceptedAutosave).toEqual(winner)
+    expect((await readdir(autosaveDir)).sort()).toEqual(['000001.json', '000002.json'])
+  })
+
+  it('allows a later save to proceed after an earlier queued save fails', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: makeIdFactory(),
+    })
+    const created = await repository.create({ parentDir, name: 'Ember Line' })
+    const invalidSave = repository.save(created.projectDir, {
+      ...structuredClone(created.project),
+      name: '   ',
+    })
+    const validSave = repository.save(created.projectDir, {
+      ...structuredClone(created.project),
+      name: 'Recovered Save',
+    })
+
+    await expect(invalidSave).rejects.toThrow(/Project name is required/i)
+    await expect(validSave).resolves.toMatchObject({
+      project: { name: 'Recovered Save', revision: 2 },
+    })
+  })
+
+  it('does not serialize saves for different project directories', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    let releaseFirstProject
+    const firstProjectGate = new Promise(resolve => {
+      releaseFirstProject = resolve
+    })
+    let markFirstProjectStarted
+    const firstProjectStarted = new Promise(resolve => {
+      markFirstProjectStarted = resolve
+    })
+    let blockedCanonicalPath
+    const fileSystem = {
+      mkdir,
+      rm,
+      readFile: async (filePath, ...args) => {
+        if (filePath === blockedCanonicalPath) {
+          markFirstProjectStarted()
+          await firstProjectGate
+        }
+        return readFile(filePath, ...args)
+      },
+    }
+    const ids = ['project-1', 'stage-1', 'project-2', 'stage-2']
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: () => ids.shift(),
+      fileSystem,
+    })
+    const first = await repository.create({ parentDir, name: 'First Project' })
+    const second = await repository.create({ parentDir, name: 'Second Project' })
+    blockedCanonicalPath = path.join(first.projectDir, 'project.json')
+
+    const firstSave = repository.save(first.projectDir, {
+      ...structuredClone(first.project),
+      name: 'Blocked First Save',
+    })
+    await firstProjectStarted
+    const secondSave = repository.save(second.projectDir, {
+      ...structuredClone(second.project),
+      name: 'Independent Second Save',
+    })
+
+    let timeoutId
+    const secondOutcome = await Promise.race([
+      secondSave.then(value => ({ status: 'saved', value })),
+      new Promise(resolve => {
+        timeoutId = setTimeout(() => resolve({ status: 'blocked' }), 1000)
+      }),
+    ])
+    clearTimeout(timeoutId)
+    releaseFirstProject()
+
+    expect(secondOutcome.status).toBe('saved')
+    await expect(firstSave).resolves.toMatchObject({
+      project: { name: 'Blocked First Save' },
+    })
   })
 
   it.each([

@@ -1,11 +1,24 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir as nodeMkdir,
+  open as nodeOpen,
+  readdir,
+  rename as nodeRename,
+  rm as nodeRm,
+} from 'node:fs/promises'
 import path from 'node:path'
 
 const AUTOSAVE_FILE_PATTERN = /^(\d+)\.json$/
 const AUTOSAVE_REVISION_WIDTH = 6
+const DEFAULT_FILE_SYSTEM = {
+  mkdir: nodeMkdir,
+  open: nodeOpen,
+  rename: nodeRename,
+  rm: nodeRm,
+}
 
-export async function writeJsonAtomic(filePath, value) {
+export async function writeJsonAtomic(filePath, value, { fileSystem: fileSystemOverrides } = {}) {
+  const fileSystem = { ...DEFAULT_FILE_SYSTEM, ...fileSystemOverrides }
   const destination = path.resolve(filePath)
   const parentDir = path.dirname(destination)
   const serialized = JSON.stringify(value, null, 2)
@@ -13,18 +26,24 @@ export async function writeJsonAtomic(filePath, value) {
     throw new TypeError('JSON value cannot be serialized.')
   }
 
-  await mkdir(parentDir, { recursive: true })
+  await fileSystem.mkdir(parentDir, { recursive: true })
   const temporaryPath = path.join(
     parentDir,
     `.${path.basename(destination)}.${process.pid}.${randomUUID()}.tmp`,
   )
 
   try {
-    await writeFile(temporaryPath, `${serialized}\n`, { encoding: 'utf8', flag: 'wx' })
-    await rename(temporaryPath, destination)
+    const handle = await fileSystem.open(temporaryPath, 'wx')
+    try {
+      await handle.writeFile(`${serialized}\n`, 'utf8')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await fileSystem.rename(temporaryPath, destination)
   } catch (error) {
     try {
-      await rm(temporaryPath, { force: true })
+      await fileSystem.rm(temporaryPath, { force: true })
     } catch {
       // Preserve the write or rename failure; cleanup is best-effort.
     }
@@ -51,6 +70,6 @@ export async function writeAutosave(projectDir, project, limit = 10) {
 
   const retainedCount = Math.max(0, Math.trunc(Number(limit)) || 0)
   await Promise.all(snapshots.slice(retainedCount).map(snapshot => (
-    rm(path.join(autosaveDir, snapshot.name), { force: true })
+    nodeRm(path.join(autosaveDir, snapshot.name), { force: true })
   )))
 }

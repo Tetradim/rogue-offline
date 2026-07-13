@@ -12,7 +12,7 @@ import {
 import { writeAutosave, writeJsonAtomic } from './fs-utils.js'
 
 const WINDOWS_INVALID_FOLDER_CHARACTER = /[<>:"/\\|?*\u0000-\u001f]/
-const WINDOWS_RESERVED_FOLDER_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
+const WINDOWS_RESERVED_FOLDER_BASENAME = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/i
 const IMMUTABLE_PROJECT_FIELDS = ['projectId', 'createdAt', 'schemaVersion']
 const DEFAULT_FILE_SYSTEM = {
   mkdir: nodeMkdir,
@@ -97,12 +97,29 @@ async function cleanupFailedCreate(fileSystem, projectDir, initializationError) 
   throw initializationError
 }
 
+function enqueueProjectSave(saveQueues, projectDir, operation) {
+  const previousTail = saveQueues.get(projectDir) ?? Promise.resolve()
+  const result = previousTail.then(operation)
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  saveQueues.set(projectDir, tail)
+
+  return result.finally(() => {
+    if (saveQueues.get(projectDir) === tail) {
+      saveQueues.delete(projectDir)
+    }
+  })
+}
+
 export function createProjectRepository({
   now = () => new Date().toISOString(),
   idFactory,
   fileSystem: fileSystemOverrides,
 } = {}) {
   const fileSystem = { ...DEFAULT_FILE_SYSTEM, ...fileSystemOverrides }
+  const saveQueues = new Map()
   return {
     async create({ parentDir, name }) {
       const trimmedName = typeof name === 'string' ? name.trim() : ''
@@ -135,40 +152,42 @@ export function createProjectRepository({
 
     async save(projectDir, editedProject) {
       const resolvedProjectDir = path.resolve(projectDir)
-      const { canonicalPath, project: canonicalProject } = await readCanonicalProject(
-        fileSystem,
-        resolvedProjectDir,
-      )
-      const changedIdentityFields = IMMUTABLE_PROJECT_FIELDS.filter(field => (
-        editedProject?.[field] !== canonicalProject[field]
-      ))
-      if (changedIdentityFields.length) {
-        throw new Error(
-          `Project identity mismatch: ${changedIdentityFields.join(', ')} must match the canonical project.`,
+      return enqueueProjectSave(saveQueues, resolvedProjectDir, async () => {
+        const { canonicalPath, project: canonicalProject } = await readCanonicalProject(
+          fileSystem,
+          resolvedProjectDir,
         )
-      }
-      if (!Number.isInteger(editedProject.revision) || editedProject.revision <= 0) {
-        throw new Error(
-          `Project validation failed for "${canonicalPath}": revision: Project revision must be a positive integer.`,
-        )
-      }
-      if (editedProject.revision < canonicalProject.revision) {
-        throw new Error(
-          `Cannot save stale project revision ${editedProject.revision}; canonical revision is ${canonicalProject.revision}.`,
-        )
-      }
+        const changedIdentityFields = IMMUTABLE_PROJECT_FIELDS.filter(field => (
+          editedProject?.[field] !== canonicalProject[field]
+        ))
+        if (changedIdentityFields.length) {
+          throw new Error(
+            `Project identity mismatch: ${changedIdentityFields.join(', ')} must match the canonical project.`,
+          )
+        }
+        if (!Number.isInteger(editedProject.revision) || editedProject.revision <= 0) {
+          throw new Error(
+            `Project validation failed for "${canonicalPath}": revision: Project revision must be a positive integer.`,
+          )
+        }
+        if (editedProject.revision < canonicalProject.revision) {
+          throw new Error(
+            `Cannot save stale project revision ${editedProject.revision}; canonical revision is ${canonicalProject.revision}.`,
+          )
+        }
 
-      const saved = {
-        ...editedProject,
-        slug: slugify(editedProject?.name),
-        revision: Math.max(canonicalProject.revision, editedProject?.revision) + 1,
-        updatedAt: resolveNow(now),
-      }
-      assertValidProject(saved, canonicalPath)
+        const saved = {
+          ...editedProject,
+          slug: slugify(editedProject?.name),
+          revision: Math.max(canonicalProject.revision, editedProject?.revision) + 1,
+          updatedAt: resolveNow(now),
+        }
+        assertValidProject(saved, canonicalPath)
 
-      await writeAutosave(resolvedProjectDir, saved)
-      await writeJsonAtomic(canonicalPath, saved)
-      return { projectDir: resolvedProjectDir, project: saved }
+        await writeAutosave(resolvedProjectDir, saved)
+        await writeJsonAtomic(canonicalPath, saved)
+        return { projectDir: resolvedProjectDir, project: saved }
+      })
     },
   }
 }
