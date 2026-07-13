@@ -105,4 +105,185 @@ describe('portable project domain', () => {
       message: 'Stage slug "custom-stage-1" is already used in this project.',
     })
   })
+
+  it('reuses the lowest available default stage ordinal after a middle removal', () => {
+    const ids = ['project-1', 'stage-1', 'stage-2', 'stage-3', 'stage-4']
+    const idFactory = () => ids.shift()
+    let project = createBlankProject({ name: 'Emberline', idFactory, now })
+    project = addBlankStage(project, { idFactory, now })
+    project = addBlankStage(project, { idFactory, now })
+    project = removeStage(project, 'stage-2', { now })
+    project = addBlankStage(project, { idFactory, now })
+
+    expect(project.stages.map(stage => stage.name)).toEqual([
+      'Custom Stage 1',
+      'Custom Stage 3',
+      'Custom Stage 2',
+    ])
+    expect(project.stages.map(stage => stage.slug)).toEqual([
+      'custom-stage-1',
+      'custom-stage-3',
+      'custom-stage-2',
+    ])
+    expect(validateProject(project)).toEqual([])
+  })
+
+  it.each([null, undefined, 42, 'project', []])(
+    'returns a structured error for a non-object project: %j',
+    project => {
+      expect(validateProject(project)).toEqual([{
+        path: 'project',
+        code: 'invalid-project',
+        message: 'Project must be an object.',
+      }])
+    },
+  )
+
+  it('rejects non-string project names and invalid stage collections', () => {
+    const project = createBlankProject({ name: 'Emberline', idFactory: makeIdFactory(), now })
+    const requiredName = {
+      path: 'name',
+      code: 'required',
+      message: 'Project name is required.',
+    }
+
+    for (const name of [undefined, null, 17, '   ']) {
+      expect(validateProject({ ...project, name })).toContainEqual(requiredName)
+    }
+    for (const stages of [undefined, null, {}, 'stages']) {
+      expect(validateProject({ ...project, stages })).toContainEqual({
+        path: 'stages',
+        code: 'invalid-stages',
+        message: 'Stages must be an array.',
+      })
+    }
+    expect(validateProject({ ...project, stages: [] })).toContainEqual({
+      path: 'stages',
+      code: 'required',
+      message: 'At least one custom stage is required.',
+    })
+  })
+
+  it.each([null, 17, 'stage', []])(
+    'rejects a non-object stage without throwing: %j',
+    stage => {
+      const project = createBlankProject({ name: 'Emberline', idFactory: makeIdFactory(), now })
+
+      expect(validateProject({ ...project, stages: [stage] })).toContainEqual({
+        path: 'stages.0',
+        code: 'invalid-stage',
+        message: 'Stage must be an object.',
+      })
+    },
+  )
+
+  it('requires stage identity fields without duplicate-error cascades', () => {
+    const project = createBlankProject({ name: 'Emberline', idFactory: makeIdFactory(), now })
+    const invalidStages = [
+      { ...project.stages[0], stageId: undefined, name: undefined, slug: undefined },
+      { ...project.stages[0], stageId: '', name: '   ', slug: '' },
+    ]
+    const errors = validateProject({ ...project, stages: invalidStages })
+
+    for (const index of [0, 1]) {
+      expect(errors).toContainEqual({
+        path: `stages.${index}.stageId`,
+        code: 'required-stage-id',
+        message: 'Stage ID is required.',
+      })
+      expect(errors).toContainEqual({
+        path: `stages.${index}.name`,
+        code: 'required-stage-name',
+        message: 'Stage name is required.',
+      })
+      expect(errors).toContainEqual({
+        path: `stages.${index}.slug`,
+        code: 'required-stage-slug',
+        message: 'Stage slug is required.',
+      })
+    }
+    expect(errors.some(error => error.code === 'duplicate-stage-id')).toBe(false)
+    expect(errors.some(error => error.code === 'duplicate-stage-slug')).toBe(false)
+  })
+
+  it('rejects non-custom stage sources and non-normalized slugs', () => {
+    const project = createBlankProject({ name: 'Emberline', idFactory: makeIdFactory(), now })
+    const stage = {
+      ...project.stages[0],
+      source: 'official',
+      slug: 'Custom Stage 1',
+    }
+    const errors = validateProject({ ...project, stages: [stage] })
+
+    expect(errors).toContainEqual({
+      path: 'stages.stage-1.source',
+      code: 'invalid-stage-source',
+      message: 'Stage source must be "custom".',
+    })
+    expect(errors).toContainEqual({
+      path: 'stages.stage-1.slug',
+      code: 'invalid-stage-slug',
+      message: 'Stage slug must be normalized as "custom-stage-1".',
+    })
+  })
+
+  it('requires base stats, moves, forms, and assets containers', () => {
+    const project = createBlankProject({ name: 'Emberline', idFactory: makeIdFactory(), now })
+    const invalidStage = {
+      ...project.stages[0],
+      baseStats: null,
+      moves: null,
+      forms: null,
+      assets: {},
+    }
+    const missingStage = { ...project.stages[0] }
+    delete missingStage.baseStats
+    delete missingStage.moves
+    delete missingStage.forms
+    delete missingStage.assets
+    const errorSets = [invalidStage, missingStage]
+      .map(stage => validateProject({ ...project, stages: [stage] }))
+
+    for (const errors of errorSets) {
+      expect(errors).toContainEqual({
+        path: 'stages.stage-1.baseStats',
+        code: 'invalid-base-stats',
+        message: 'Base stats must be an object.',
+      })
+      expect(errors).toContainEqual({
+        path: 'stages.stage-1.moves',
+        code: 'invalid-moves',
+        message: 'Moves must be an object.',
+      })
+      expect(errors).toContainEqual({
+        path: 'stages.stage-1.forms',
+        code: 'invalid-forms',
+        message: 'Forms must be an array.',
+      })
+      expect(errors).toContainEqual({
+        path: 'stages.stage-1.assets',
+        code: 'invalid-assets',
+        message: 'Assets must be an array.',
+      })
+      expect(errors.some(error => error.code === 'invalid-stat')).toBe(false)
+      expect(errors.some(error => error.code === 'invalid-move-list')).toBe(false)
+    }
+  })
+
+  it('requires level-up, TM, and egg move arrays', () => {
+    const project = createBlankProject({ name: 'Emberline', idFactory: makeIdFactory(), now })
+    const stage = {
+      ...project.stages[0],
+      moves: { levelUp: null, tm: {}, egg: 'moves' },
+    }
+    const errors = validateProject({ ...project, stages: [stage] })
+
+    for (const list of ['levelUp', 'tm', 'egg']) {
+      expect(errors).toContainEqual({
+        path: `stages.stage-1.moves.${list}`,
+        code: 'invalid-move-list',
+        message: `Move list "${list}" must be an array.`,
+      })
+    }
+  })
 })

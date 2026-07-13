@@ -89,7 +89,10 @@ export function addBlankStage(project, {
   idFactory = () => makeId('stage'),
   now = () => new Date().toISOString(),
 } = {}) {
-  const nextStage = createBlankStage({ ordinal: project.stages.length + 1, idFactory })
+  const usedSlugs = new Set(project.stages.map(stage => stage.slug))
+  let ordinal = 1
+  while (usedSlugs.has(slugify(`Custom Stage ${ordinal}`))) ordinal += 1
+  const nextStage = createBlankStage({ ordinal, idFactory })
   return touch({ ...project, stages: [...project.stages, nextStage] }, now)
 }
 
@@ -137,7 +140,19 @@ export function calculateBst(stage) {
   return STAT_NAMES.reduce((total, stat) => total + Number(stage.baseStats[stat] || 0), 0)
 }
 
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
 export function validateProject(project) {
+  if (!isObject(project)) {
+    return [{
+      path: 'project',
+      code: 'invalid-project',
+      message: 'Project must be an object.',
+    }]
+  }
+
   const errors = []
   if (project.schemaVersion !== PROJECT_SCHEMA_VERSION) {
     errors.push({
@@ -146,43 +161,138 @@ export function validateProject(project) {
       message: `Expected schema version ${PROJECT_SCHEMA_VERSION}.`,
     })
   }
-  if (!project.name?.trim()) {
+  if (typeof project.name !== 'string' || !project.name.trim()) {
     errors.push({ path: 'name', code: 'required', message: 'Project name is required.' })
   }
-  if (!project.stages?.length) {
+  if (!Array.isArray(project.stages)) {
+    errors.push({ path: 'stages', code: 'invalid-stages', message: 'Stages must be an array.' })
+  } else if (!project.stages.length) {
     errors.push({ path: 'stages', code: 'required', message: 'At least one custom stage is required.' })
   }
 
   const stageIds = new Set()
   const slugs = new Set()
-  for (const stage of project.stages || []) {
-    if (stageIds.has(stage.stageId)) {
+  for (const [index, stage] of (Array.isArray(project.stages) ? project.stages : []).entries()) {
+    if (!isObject(stage)) {
+      errors.push({
+        path: `stages.${index}`,
+        code: 'invalid-stage',
+        message: 'Stage must be an object.',
+      })
+      continue
+    }
+
+    const hasStageId = typeof stage.stageId === 'string' && Boolean(stage.stageId.trim())
+    const hasStageName = typeof stage.name === 'string' && Boolean(stage.name.trim())
+    const hasStageSlug = typeof stage.slug === 'string' && Boolean(stage.slug.trim())
+    const stagePath = `stages.${hasStageId ? stage.stageId : index}`
+
+    if (!hasStageId) {
+      errors.push({
+        path: `${stagePath}.stageId`,
+        code: 'required-stage-id',
+        message: 'Stage ID is required.',
+      })
+    } else if (stageIds.has(stage.stageId)) {
       errors.push({
         path: `stages.${stage.stageId}.stageId`,
         code: 'duplicate-stage-id',
         message: `Stage ID "${stage.stageId}" is duplicated.`,
       })
     }
-    stageIds.add(stage.stageId)
+    if (hasStageId) stageIds.add(stage.stageId)
 
-    if (slugs.has(stage.slug)) {
+    if (!hasStageName) {
       errors.push({
-        path: `stages.${stage.stageId}.slug`,
+        path: `${stagePath}.name`,
+        code: 'required-stage-name',
+        message: 'Stage name is required.',
+      })
+    }
+
+    if (!hasStageSlug) {
+      errors.push({
+        path: `${stagePath}.slug`,
+        code: 'required-stage-slug',
+        message: 'Stage slug is required.',
+      })
+    } else {
+      const normalizedSlug = slugify(stage.slug)
+      if (normalizedSlug !== stage.slug) {
+        errors.push({
+          path: `${stagePath}.slug`,
+          code: 'invalid-stage-slug',
+          message: `Stage slug must be normalized as "${normalizedSlug}".`,
+        })
+      }
+    }
+    if (hasStageSlug && slugs.has(stage.slug)) {
+      errors.push({
+        path: `${stagePath}.slug`,
         code: 'duplicate-stage-slug',
         message: `Stage slug "${stage.slug}" is already used in this project.`,
       })
     }
-    slugs.add(stage.slug)
+    if (hasStageSlug) slugs.add(stage.slug)
 
-    for (const stat of STAT_NAMES) {
-      const value = stage.baseStats?.[stat]
-      if (!Number.isInteger(value) || value < 1 || value > 255) {
-        errors.push({
-          path: `stages.${stage.stageId}.baseStats.${stat}`,
-          code: 'invalid-stat',
-          message: `${stat} must be an integer from 1 to 255.`,
-        })
+    if (stage.source !== 'custom') {
+      errors.push({
+        path: `${stagePath}.source`,
+        code: 'invalid-stage-source',
+        message: 'Stage source must be "custom".',
+      })
+    }
+
+    if (!isObject(stage.baseStats)) {
+      errors.push({
+        path: `${stagePath}.baseStats`,
+        code: 'invalid-base-stats',
+        message: 'Base stats must be an object.',
+      })
+    } else {
+      for (const stat of STAT_NAMES) {
+        const value = stage.baseStats[stat]
+        if (!Number.isInteger(value) || value < 1 || value > 255) {
+          errors.push({
+            path: `${stagePath}.baseStats.${stat}`,
+            code: 'invalid-stat',
+            message: `${stat} must be an integer from 1 to 255.`,
+          })
+        }
       }
+    }
+
+    if (!isObject(stage.moves)) {
+      errors.push({
+        path: `${stagePath}.moves`,
+        code: 'invalid-moves',
+        message: 'Moves must be an object.',
+      })
+    } else {
+      for (const list of ['levelUp', 'tm', 'egg']) {
+        if (!Array.isArray(stage.moves[list])) {
+          errors.push({
+            path: `${stagePath}.moves.${list}`,
+            code: 'invalid-move-list',
+            message: `Move list "${list}" must be an array.`,
+          })
+        }
+      }
+    }
+
+    if (!Array.isArray(stage.forms)) {
+      errors.push({
+        path: `${stagePath}.forms`,
+        code: 'invalid-forms',
+        message: 'Forms must be an array.',
+      })
+    }
+    if (!Array.isArray(stage.assets)) {
+      errors.push({
+        path: `${stagePath}.assets`,
+        code: 'invalid-assets',
+        message: 'Assets must be an array.',
+      })
     }
   }
   return errors
