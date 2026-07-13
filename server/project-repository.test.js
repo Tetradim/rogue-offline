@@ -6,8 +6,10 @@ import {
   open,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -388,6 +390,175 @@ describe('portable project repository', () => {
     expect(canonical).toEqual(winner)
     expect(acceptedAutosave).toEqual(winner)
     expect((await readdir(autosaveDir)).sort()).toEqual(['000001.json', '000002.json'])
+  })
+
+  it.skipIf(process.platform !== 'win32')(
+    'serializes overlapping saves through differently-cased Windows paths',
+    async () => {
+      const parentDir = await makeTemporaryDirectory()
+      let releaseFirstRead
+      const firstReadGate = new Promise(resolve => {
+        releaseFirstRead = resolve
+      })
+      let markFirstReadStarted
+      const firstReadStarted = new Promise(resolve => {
+        markFirstReadStarted = resolve
+      })
+      let canonicalReads = 0
+      const fileSystem = {
+        mkdir,
+        rm,
+        readFile: async (filePath, ...args) => {
+          if (path.basename(filePath).toLowerCase() === 'project.json') {
+            canonicalReads += 1
+            if (canonicalReads === 1) {
+              markFirstReadStarted()
+              await firstReadGate
+            }
+          }
+          return readFile(filePath, ...args)
+        },
+      }
+      const repository = createProjectRepository({
+        now: () => '2026-07-13T12:00:00.000Z',
+        idFactory: makeIdFactory(),
+        fileSystem,
+      })
+      const created = await repository.create({ parentDir, name: 'Case Lock Project' })
+      const differentlyCasedProjectDir = created.projectDir.toLowerCase()
+      expect(differentlyCasedProjectDir).not.toBe(created.projectDir)
+
+      const firstSave = repository.save(created.projectDir, {
+        ...structuredClone(created.project),
+        name: 'Original Case Winner',
+      })
+      await firstReadStarted
+      const secondSave = repository.save(differentlyCasedProjectDir, {
+        ...structuredClone(created.project),
+        name: 'Lower Case Loser',
+      })
+      await new Promise(resolve => setImmediate(resolve))
+      releaseFirstRead()
+      const results = await Promise.allSettled([firstSave, secondSave])
+
+      const fulfilled = results.filter(result => result.status === 'fulfilled')
+      const rejected = results.filter(result => result.status === 'rejected')
+      expect(fulfilled).toHaveLength(1)
+      expect(rejected).toHaveLength(1)
+      expect(rejected[0].reason.message).toMatch(/stale/i)
+      expect(fulfilled[0].value.project.name).toBe('Original Case Winner')
+      expect(fulfilled[0].value.projectDir).toBe(created.projectDir)
+      expect(canonicalReads).toBe(2)
+
+      const canonical = JSON.parse(await readFile(path.join(created.projectDir, 'project.json'), 'utf8'))
+      const autosaveDir = path.join(created.projectDir, '.studio', 'autosaves')
+      const acceptedAutosave = JSON.parse(await readFile(path.join(autosaveDir, '000002.json'), 'utf8'))
+      expect(canonical).toEqual(fulfilled[0].value.project)
+      expect(acceptedAutosave).toEqual(fulfilled[0].value.project)
+      expect((await readdir(autosaveDir)).sort()).toEqual(['000001.json', '000002.json'])
+    },
+  )
+
+  it.skipIf(process.platform !== 'win32')(
+    'serializes overlapping saves through a Windows junction alias',
+    async () => {
+      const parentDir = await makeTemporaryDirectory()
+      let releaseFirstRead
+      const firstReadGate = new Promise(resolve => {
+        releaseFirstRead = resolve
+      })
+      let markFirstReadStarted
+      const firstReadStarted = new Promise(resolve => {
+        markFirstReadStarted = resolve
+      })
+      let canonicalReads = 0
+      const fileSystem = {
+        mkdir,
+        rm,
+        readFile: async (filePath, ...args) => {
+          if (path.basename(filePath).toLowerCase() === 'project.json') {
+            canonicalReads += 1
+            if (canonicalReads === 1) {
+              markFirstReadStarted()
+              await firstReadGate
+            }
+          }
+          return readFile(filePath, ...args)
+        },
+      }
+      const repository = createProjectRepository({
+        now: () => '2026-07-13T12:00:00.000Z',
+        idFactory: makeIdFactory(),
+        fileSystem,
+      })
+      const created = await repository.create({ parentDir, name: 'Junction Lock Project' })
+      const junctionProjectDir = path.join(parentDir, 'Project Junction')
+      await symlink(created.projectDir, junctionProjectDir, 'junction')
+
+      const firstSave = repository.save(created.projectDir, {
+        ...structuredClone(created.project),
+        name: 'Real Path Winner',
+      })
+      await firstReadStarted
+      const secondSave = repository.save(junctionProjectDir, {
+        ...structuredClone(created.project),
+        name: 'Junction Alias Loser',
+      })
+      await new Promise(resolve => setImmediate(resolve))
+      releaseFirstRead()
+      const results = await Promise.allSettled([firstSave, secondSave])
+
+      const fulfilled = results.filter(result => result.status === 'fulfilled')
+      const rejected = results.filter(result => result.status === 'rejected')
+      expect(fulfilled).toHaveLength(1)
+      expect(rejected).toHaveLength(1)
+      expect(rejected[0].reason.message).toMatch(/stale/i)
+      expect(fulfilled[0].value.project.name).toBe('Real Path Winner')
+      expect(canonicalReads).toBe(2)
+
+      const canonical = JSON.parse(await readFile(path.join(created.projectDir, 'project.json'), 'utf8'))
+      const acceptedAutosave = JSON.parse(await readFile(
+        path.join(created.projectDir, '.studio', 'autosaves', '000002.json'),
+        'utf8',
+      ))
+      expect(canonical).toEqual(fulfilled[0].value.project)
+      expect(acceptedAutosave).toEqual(fulfilled[0].value.project)
+    },
+  )
+
+  it('reports filesystem-identity failures without poisoning later saves', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    const identityError = Object.assign(new Error('project directory access denied'), {
+      code: 'EACCES',
+    })
+    let identityCalls = 0
+    const fileSystem = {
+      mkdir,
+      readFile,
+      rm,
+      realpath: async directory => {
+        identityCalls += 1
+        if (identityCalls === 1) throw identityError
+        return realpath(directory)
+      },
+    }
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: makeIdFactory(),
+      fileSystem,
+    })
+    const created = await repository.create({ parentDir, name: 'Identity Recovery Project' })
+    const draft = {
+      ...structuredClone(created.project),
+      name: 'Recovered Identity Save',
+    }
+
+    await expect(repository.save(created.projectDir, draft))
+      .rejects.toThrow(/resolve project directory.*access denied/i)
+    await expect(repository.save(created.projectDir, draft)).resolves.toMatchObject({
+      projectDir: created.projectDir,
+      project: { name: 'Recovered Identity Save', revision: 2 },
+    })
   })
 
   it('allows a later save to proceed after an earlier queued save fails', async () => {

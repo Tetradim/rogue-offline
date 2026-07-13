@@ -1,6 +1,7 @@
 import {
   mkdir as nodeMkdir,
   readFile as nodeReadFile,
+  realpath as nodeRealpath,
   rm as nodeRm,
 } from 'node:fs/promises'
 import path from 'node:path'
@@ -17,6 +18,7 @@ const IMMUTABLE_PROJECT_FIELDS = ['projectId', 'createdAt', 'schemaVersion']
 const DEFAULT_FILE_SYSTEM = {
   mkdir: nodeMkdir,
   readFile: nodeReadFile,
+  realpath: nodeRealpath,
   rm: nodeRm,
 }
 
@@ -113,6 +115,23 @@ function enqueueProjectSave(saveQueues, projectDir, operation) {
   })
 }
 
+async function resolveProjectSaveQueueKey(fileSystem, resolvedProjectDir) {
+  let canonicalProjectDir
+  try {
+    canonicalProjectDir = await fileSystem.realpath(resolvedProjectDir)
+  } catch (error) {
+    throw new Error(
+      `Could not resolve project directory "${resolvedProjectDir}" for saving: ${error.message}`,
+      { cause: error },
+    )
+  }
+
+  const normalizedProjectDir = path.normalize(path.resolve(canonicalProjectDir))
+  return process.platform === 'win32'
+    ? normalizedProjectDir.toLowerCase()
+    : normalizedProjectDir
+}
+
 export function createProjectRepository({
   now = () => new Date().toISOString(),
   idFactory,
@@ -152,7 +171,8 @@ export function createProjectRepository({
 
     async save(projectDir, editedProject) {
       const resolvedProjectDir = path.resolve(projectDir)
-      return enqueueProjectSave(saveQueues, resolvedProjectDir, async () => {
+      const saveQueueKey = await resolveProjectSaveQueueKey(fileSystem, resolvedProjectDir)
+      return enqueueProjectSave(saveQueues, saveQueueKey, async () => {
         const { canonicalPath, project: canonicalProject } = await readCanonicalProject(
           fileSystem,
           resolvedProjectDir,
