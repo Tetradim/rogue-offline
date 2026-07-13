@@ -31,6 +31,12 @@ function makeIdFactory() {
   return () => ids.shift()
 }
 
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
+  for (const child of Object.values(value)) deepFreeze(child)
+  return Object.freeze(value)
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(directory => (
     rm(directory, { recursive: true, force: true })
@@ -110,11 +116,14 @@ describe('portable project repository', () => {
       idFactory: makeIdFactory(),
     })
     const created = await repository.create({ parentDir, name: 'Ember Line' })
-    const edited = { ...created.project, name: 'Aurora Line' }
+    const edited = structuredClone(created.project)
+    edited.name = 'Aurora Line'
+    const editedSnapshot = structuredClone(edited)
+    deepFreeze(edited)
 
     let saved = await repository.save(created.projectDir, edited)
 
-    expect(edited).toEqual({ ...created.project, name: 'Aurora Line' })
+    expect(edited).toEqual(editedSnapshot)
     expect(saved.project).toMatchObject({
       name: 'Aurora Line',
       slug: 'aurora-line',
@@ -141,6 +150,51 @@ describe('portable project repository', () => {
     const repository = createProjectRepository()
 
     await expect(repository.create({ parentDir, name })).rejects.toThrow('Project name is required.')
+    await expect(readdir(parentDir)).resolves.toEqual([])
+  })
+
+  it('rejects traversal and separators without escaping the selected parent', async () => {
+    const rootDir = await makeTemporaryDirectory()
+    const parentDir = path.join(rootDir, 'projects')
+    await mkdir(parentDir)
+    const repository = createProjectRepository()
+
+    for (const name of ['../escaped-project', 'nested/project', 'nested\\project']) {
+      await expect(repository.create({ parentDir, name }))
+        .rejects.toThrow('Project name cannot be used as a Windows folder name.')
+    }
+
+    await expect(readdir(parentDir)).resolves.toEqual([])
+    expect(await pathExists(path.join(rootDir, 'escaped-project'))).toBe(false)
+  })
+
+  it.each([
+    'angle<name',
+    'angle>name',
+    'colon:name',
+    'quote"name',
+    'pipe|name',
+    'question?name',
+    'star*name',
+    'control\u0001name',
+    'trailing.',
+    '.',
+    '..',
+    'CON',
+    'con.txt',
+    'PRN',
+    'AUX.json',
+    'nul',
+    'COM1',
+    'com9.log',
+    'LPT1',
+    'lpt9.txt',
+  ])('rejects a Windows-invalid or reserved project folder name: %j', async name => {
+    const parentDir = await makeTemporaryDirectory()
+    const repository = createProjectRepository()
+
+    await expect(repository.create({ parentDir, name }))
+      .rejects.toThrow('Project name cannot be used as a Windows folder name.')
     await expect(readdir(parentDir)).resolves.toEqual([])
   })
 
@@ -176,6 +230,88 @@ describe('portable project repository', () => {
       .resolves.toEqual(['000001.json'])
   })
 
+  it('does not coerce an invalid draft revision into a valid saved revision', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: makeIdFactory(),
+    })
+    const created = await repository.create({ parentDir, name: 'Ember Line' })
+    const canonicalPath = path.join(created.projectDir, 'project.json')
+    const canonicalBefore = await readFile(canonicalPath, 'utf8')
+
+    await expect(repository.save(created.projectDir, {
+      ...structuredClone(created.project),
+      revision: '1',
+    })).rejects.toThrow(/Project revision must be a positive integer\./i)
+    await expect(readFile(canonicalPath, 'utf8')).resolves.toBe(canonicalBefore)
+  })
+
+  it('rejects a stale draft without replacing canonical state or autosaves', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: makeIdFactory(),
+    })
+    const created = await repository.create({ parentDir, name: 'Ember Line' })
+    const firstDraft = { ...structuredClone(created.project), name: 'First Save' }
+    const staleDraft = { ...structuredClone(created.project), name: 'Stale Overwrite' }
+    await repository.save(created.projectDir, firstDraft)
+    const canonicalPath = path.join(created.projectDir, 'project.json')
+    const autosaveDir = path.join(created.projectDir, '.studio', 'autosaves')
+    const canonicalAfterFirstSave = await readFile(canonicalPath, 'utf8')
+    const autosavesAfterFirstSave = (await readdir(autosaveDir)).sort()
+
+    await expect(repository.save(created.projectDir, staleDraft)).rejects.toThrow(/stale/i)
+    await expect(readFile(canonicalPath, 'utf8')).resolves.toBe(canonicalAfterFirstSave)
+    expect((await readdir(autosaveDir)).sort()).toEqual(autosavesAfterFirstSave)
+  })
+
+  it.each([
+    ['projectId', 'other-project'],
+    ['createdAt', '2026-07-12T12:00:00.000Z'],
+    ['schemaVersion', 1],
+  ])('rejects a draft that changes immutable project identity field %s', async (field, value) => {
+    const parentDir = await makeTemporaryDirectory()
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: makeIdFactory(),
+    })
+    const created = await repository.create({ parentDir, name: 'Ember Line' })
+    const canonicalPath = path.join(created.projectDir, 'project.json')
+    const autosaveDir = path.join(created.projectDir, '.studio', 'autosaves')
+    const canonicalBefore = await readFile(canonicalPath, 'utf8')
+    const autosavesBefore = await readdir(autosaveDir)
+    const foreignDraft = { ...structuredClone(created.project), [field]: value }
+
+    await expect(repository.save(created.projectDir, foreignDraft))
+      .rejects.toThrow(new RegExp(`identity.*${field}`, 'i'))
+    await expect(readFile(canonicalPath, 'utf8')).resolves.toBe(canonicalBefore)
+    await expect(readdir(autosaveDir)).resolves.toEqual(autosavesBefore)
+  })
+
+  it('does not replace canonical state when the autosave cannot be written', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: makeIdFactory(),
+    })
+    const created = await repository.create({ parentDir, name: 'Ember Line' })
+    const canonicalPath = path.join(created.projectDir, 'project.json')
+    const autosavePath = path.join(created.projectDir, '.studio', 'autosaves')
+    const canonicalBefore = await readFile(canonicalPath, 'utf8')
+    await rm(autosavePath, { recursive: true })
+    await writeFile(autosavePath, 'autosaves unavailable', 'utf8')
+
+    await expect(repository.save(created.projectDir, {
+      ...structuredClone(created.project),
+      name: 'Must Not Commit',
+    })).rejects.toThrow()
+
+    await expect(readFile(canonicalPath, 'utf8')).resolves.toBe(canonicalBefore)
+    await expect(readFile(autosavePath, 'utf8')).resolves.toBe('autosaves unavailable')
+  })
+
   it('chooses numbered sibling directories when project names collide', async () => {
     const parentDir = await makeTemporaryDirectory()
     const idFactories = [
@@ -198,5 +334,65 @@ describe('portable project repository', () => {
       path.join(path.resolve(parentDir), 'Name-2'),
       path.join(path.resolve(parentDir), 'Name-3'),
     ])
+  })
+
+  it('removes a claimed project directory after ordered initialization fails', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    const projectDir = path.join(parentDir, 'Name')
+    const initializationError = new Error('operation-log initialization failed')
+    const fileSystem = {
+      mkdir: async (directory, options) => {
+        if (directory === path.join(projectDir, '.studio', 'operation-logs')) {
+          throw initializationError
+        }
+        return mkdir(directory, options)
+      },
+      readFile,
+      rm,
+    }
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: makeIdFactory(),
+      fileSystem,
+    })
+
+    await expect(repository.create({ parentDir, name: 'Name' })).rejects.toBe(initializationError)
+    expect(await pathExists(projectDir)).toBe(false)
+  })
+
+  it('reports both initialization and cleanup errors when partial-create cleanup fails', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    const projectDir = path.join(parentDir, 'Name')
+    const initializationError = new Error('operation-log initialization failed')
+    const cleanupError = new Error('project cleanup failed')
+    const fileSystem = {
+      mkdir: async (directory, options) => {
+        if (directory === path.join(projectDir, '.studio', 'operation-logs')) {
+          throw initializationError
+        }
+        return mkdir(directory, options)
+      },
+      readFile,
+      rm: async directory => {
+        if (directory === projectDir) throw cleanupError
+        return rm(directory, { recursive: true, force: true })
+      },
+    }
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: makeIdFactory(),
+      fileSystem,
+    })
+
+    let failure
+    try {
+      await repository.create({ parentDir, name: 'Name' })
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect(failure.errors).toEqual([initializationError, cleanupError])
+    expect(failure.message).toMatch(/initialization.*cleanup/i)
   })
 })
