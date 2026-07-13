@@ -286,4 +286,215 @@ describe('portable project domain', () => {
       })
     }
   })
+
+  it('rejects missing or malformed evolution edges before domain operations', () => {
+    const idFactory = makeIdFactory()
+    let project = createBlankProject({ name: 'Emberline', idFactory, now })
+    project = addBlankStage(project, { idFactory, now })
+    const missingEdges = { ...project }
+    delete missingEdges.evolutionEdges
+
+    for (const candidate of [missingEdges, { ...project, evolutionEdges: {} }]) {
+      expect(validateProject(candidate)).toContainEqual({
+        path: 'evolutionEdges',
+        code: 'invalid-evolution-edges',
+        message: 'Evolution edges must be an array.',
+      })
+    }
+    expect(validateProject({ ...project, evolutionEdges: [null] })).toContainEqual({
+      path: 'evolutionEdges.0',
+      code: 'invalid-evolution-edge',
+      message: 'Evolution edge must be an object.',
+    })
+  })
+
+  it('requires complete project identity and metadata', () => {
+    const project = createBlankProject({ name: 'Emberline', idFactory: makeIdFactory(), now })
+    const cases = [
+      ['projectId', undefined, {
+        path: 'projectId',
+        code: 'required-project-id',
+        message: 'Project ID is required.',
+      }],
+      ['name', undefined, {
+        path: 'name',
+        code: 'required',
+        message: 'Project name is required.',
+      }],
+      ['slug', undefined, {
+        path: 'slug',
+        code: 'required-project-slug',
+        message: 'Project slug is required.',
+      }],
+      ['slug', 'Ember Line', {
+        path: 'slug',
+        code: 'invalid-project-slug',
+        message: 'Project slug must be normalized as "ember-line".',
+      }],
+      ['schemaVersion', undefined, {
+        path: 'schemaVersion',
+        code: 'unsupported-schema',
+        message: 'Expected schema version 2.',
+      }],
+      ['revision', 0, {
+        path: 'revision',
+        code: 'invalid-project-revision',
+        message: 'Project revision must be a positive integer.',
+      }],
+      ['createdAt', 'not-a-date', {
+        path: 'createdAt',
+        code: 'invalid-created-at',
+        message: 'Created timestamp must be an ISO date string.',
+      }],
+      ['updatedAt', undefined, {
+        path: 'updatedAt',
+        code: 'invalid-updated-at',
+        message: 'Updated timestamp must be an ISO date string.',
+      }],
+    ]
+
+    for (const [field, value, expectedError] of cases) {
+      expect(validateProject({ ...project, [field]: value })).toContainEqual(expectedError)
+    }
+  })
+
+  it('requires encounter policy arrays and target bindings without child cascades', () => {
+    const project = createBlankProject({ name: 'Emberline', idFactory: makeIdFactory(), now })
+    const invalidPolicyErrors = validateProject({ ...project, encounterPolicy: null })
+
+    expect(invalidPolicyErrors).toContainEqual({
+      path: 'encounterPolicy',
+      code: 'invalid-encounter-policy',
+      message: 'Encounter policy must be an object.',
+    })
+    expect(invalidPolicyErrors.some(error => [
+      'invalid-official-lines',
+      'invalid-placements',
+    ].includes(error.code))).toBe(false)
+
+    const invalidLists = validateProject({
+      ...project,
+      encounterPolicy: { officialLines: null, placements: {} },
+    })
+    expect(invalidLists).toContainEqual({
+      path: 'encounterPolicy.officialLines',
+      code: 'invalid-official-lines',
+      message: 'Official encounter lines must be an array.',
+    })
+    expect(invalidLists).toContainEqual({
+      path: 'encounterPolicy.placements',
+      code: 'invalid-placements',
+      message: 'Encounter placements must be an array.',
+    })
+
+    const missingBindings = { ...project }
+    delete missingBindings.targetBindings
+    expect(validateProject(missingBindings)).toContainEqual({
+      path: 'targetBindings',
+      code: 'invalid-target-bindings',
+      message: 'Target bindings must be an array.',
+    })
+  })
+
+  it('requires complete stage scalar metadata and dimensions', () => {
+    const project = createBlankProject({ name: 'Emberline', idFactory: makeIdFactory(), now })
+    const cases = [
+      ['category', undefined, {
+        path: 'stages.stage-1.category',
+        code: 'invalid-stage-category',
+        message: 'Stage category must be a string.',
+      }],
+      ['generation', 0, {
+        path: 'stages.stage-1.generation',
+        code: 'invalid-stage-generation',
+        message: 'Stage generation must be a positive integer.',
+      }],
+      ['height', '1', {
+        path: 'stages.stage-1.height',
+        code: 'invalid-stage-height',
+        message: 'Stage height must be a positive finite number.',
+      }],
+      ['weight', 0, {
+        path: 'stages.stage-1.weight',
+        code: 'invalid-stage-weight',
+        message: 'Stage weight must be a positive finite number.',
+      }],
+      ['growthRate', '', {
+        path: 'stages.stage-1.growthRate',
+        code: 'invalid-stage-growth-rate',
+        message: 'Stage growth rate must be a non-empty string.',
+      }],
+      ['baseFriendship', -1, {
+        path: 'stages.stage-1.baseFriendship',
+        code: 'invalid-stage-base-friendship',
+        message: 'Stage base friendship must be an integer from 0 to 255.',
+      }],
+      ['captureRate', 256, {
+        path: 'stages.stage-1.captureRate',
+        code: 'invalid-stage-capture-rate',
+        message: 'Stage capture rate must be an integer from 0 to 255.',
+      }],
+      ['genderRatio', '50', {
+        path: 'stages.stage-1.genderRatio',
+        code: 'invalid-stage-gender-ratio',
+        message: 'Stage gender ratio must be a finite number from 0 to 100.',
+      }],
+      ['passive', null, {
+        path: 'stages.stage-1.passive',
+        code: 'invalid-stage-passive',
+        message: 'Stage passive must be a string.',
+      }],
+      ['revision', 0, {
+        path: 'stages.stage-1.revision',
+        code: 'invalid-stage-revision',
+        message: 'Stage revision must be a positive integer.',
+      }],
+    ]
+
+    for (const [field, value, expectedError] of cases) {
+      const stage = { ...project.stages[0], [field]: value }
+      expect(validateProject({ ...project, stages: [stage] })).toContainEqual(expectedError)
+    }
+  })
+
+  it('requires stage flags, types, and abilities with essential value types', () => {
+    const project = createBlankProject({ name: 'Emberline', idFactory: makeIdFactory(), now })
+    const stage = project.stages[0]
+    const invalidFlagsErrors = validateProject({ ...project, stages: [{ ...stage, flags: null }] })
+
+    expect(invalidFlagsErrors).toContainEqual({
+      path: 'stages.stage-1.flags',
+      code: 'invalid-stage-flags',
+      message: 'Stage flags must be an object.',
+    })
+    expect(invalidFlagsErrors.some(error => error.code === 'invalid-stage-flag')).toBe(false)
+
+    const invalidFlagValueErrors = validateProject({
+      ...project,
+      stages: [{
+        ...stage,
+        flags: { legendary: false, mythical: 'false', starter: false },
+      }],
+    })
+    expect(invalidFlagValueErrors).toContainEqual({
+      path: 'stages.stage-1.flags.mythical',
+      code: 'invalid-stage-flag',
+      message: 'Stage flag "mythical" must be boolean.',
+    })
+
+    for (const types of [undefined, [], ['NORMAL', 17]]) {
+      expect(validateProject({ ...project, stages: [{ ...stage, types }] })).toContainEqual({
+        path: 'stages.stage-1.types',
+        code: 'invalid-stage-types',
+        message: 'Stage types must be a non-empty array of strings.',
+      })
+    }
+    for (const abilities of [undefined, {}, ['OVERGROW', 17]]) {
+      expect(validateProject({ ...project, stages: [{ ...stage, abilities }] })).toContainEqual({
+        path: 'stages.stage-1.abilities',
+        code: 'invalid-stage-abilities',
+        message: 'Stage abilities must be an array of strings.',
+      })
+    }
+  })
 })
