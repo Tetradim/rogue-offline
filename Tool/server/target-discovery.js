@@ -1,7 +1,10 @@
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, readdir, realpath, stat } from 'node:fs/promises'
+import { access, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
+const execFileAsync = promisify(execFile)
 const MAX_ENTRIES = 20000
 const SKIP_DIRECTORIES = new Set([
   'node_modules',
@@ -11,9 +14,37 @@ const SKIP_DIRECTORIES = new Set([
   'build',
   'coverage',
 ])
+const SOURCE_EXTENSION = /\.(?:ts|tsx)$/i
+const CATALOG_NAMES = [
+  'PokemonType',
+  'AbilityId',
+  'GrowthRate',
+  'MoveId',
+  'EvolutionItem',
+  'FormChangeItem',
+  'TimeOfDay',
+  'BiomeId',
+]
 
 function targetError(message, statusCode = 400) {
   return Object.assign(new Error(message), { statusCode })
+}
+
+function normalized(relativePath) {
+  return relativePath.replaceAll('\\', '/')
+}
+
+function hashText(value) {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+async function exists(file) {
+  try {
+    await access(file)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function walk(root) {
@@ -30,29 +61,18 @@ async function walk(root) {
       continue
     }
     for (const entry of entries) {
-      if (files.length + directories.length > MAX_ENTRIES) {
-        throw targetError('Target checkout is too large to inspect safely.')
-      }
+      if (files.length + directories.length > MAX_ENTRIES) throw targetError('Target checkout is too large to inspect safely.')
       const full = path.join(directory, entry.name)
       if (entry.isDirectory()) {
         if (!SKIP_DIRECTORIES.has(entry.name)) pending.push(full)
-      } else if (entry.isFile()) {
-        files.push(full)
-      }
+      } else if (entry.isFile()) files.push(full)
     }
   }
   return { files, directories }
 }
 
-function normalized(relativePath) {
-  return relativePath.replaceAll('\\', '/')
-}
-
 function choose(files, root, patterns) {
-  const candidates = files.map(file => ({
-    file,
-    relative: normalized(path.relative(root, file)).toLowerCase(),
-  }))
+  const candidates = files.map(file => ({ file, relative: normalized(path.relative(root, file)).toLowerCase() }))
   for (const pattern of patterns) {
     const found = candidates.find(candidate => pattern.test(candidate.relative))
     if (found) return found.file
@@ -88,154 +108,222 @@ function parseSpeciesIds(source) {
   return { ids, names }
 }
 
-async function resolveGitRevision(root) {
-  const head = await readOptional(path.join(root, '.git', 'HEAD'))
-  if (!head.trim()) return null
-  if (!head.startsWith('ref:')) return head.trim()
-  const ref = head.slice(5).trim()
-  return (await readOptional(path.join(root, '.git', ref))).trim() || ref
+function parseEnumMembers(source, enumName) {
+  const escaped = enumName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = source.match(new RegExp(`(?:export\\s+)?(?:const\\s+)?enum\\s+${escaped}\\s*\\{([\\s\\S]*?)\\}`))
+  if (!match) return null
+  const members = new Set()
+  for (const line of match[1].split('\n')) {
+    const clean = line.replace(/\/\/.*$/, '').trim()
+    const member = clean.match(/^([A-Z][A-Z0-9_]*)\s*(?:=|,|$)/)
+    if (member) members.add(member[1])
+  }
+  return members
+}
+
+async function buildCatalogs(files, root) {
+  const sourceFiles = files.filter(file => SOURCE_EXTENSION.test(file))
+  const catalogs = Object.fromEntries(CATALOG_NAMES.map(name => [name, null]))
+  const enumFiles = {}
+  for (const file of sourceFiles) {
+    if (Object.values(catalogs).every(Boolean)) break
+    const relative = normalized(path.relative(root, file))
+    const source = await readOptional(file)
+    for (const name of CATALOG_NAMES) {
+      if (catalogs[name]) continue
+      const members = parseEnumMembers(source, name)
+      if (members?.size) {
+        catalogs[name] = members
+        enumFiles[name] = relative
+      }
+    }
+  }
+  return { catalogs, enumFiles }
 }
 
 function classifyRegistry(speciesSource, generationSource) {
-  if (!/\benum\s+SpeciesId\b/.test(speciesSource)) {
-    throw targetError(
-      'The detected species ID file does not contain a recognizable SpeciesId enum.',
-    )
-  }
-  if (!/\bgenerationOneSpeciesData\b/.test(generationSource)) {
-    throw targetError(
-      'The detected species registry has no generationOneSpeciesData anchor.',
-    )
-  }
-  const modern = (
-    /\bSpeciesDataMapConfig\b/.test(generationSource)
+  if (!/\benum\s+SpeciesId\b/.test(speciesSource)) throw targetError('The detected species ID file does not contain a recognizable SpeciesId enum.')
+  const modern = /\bSpeciesDataMapConfig\b/.test(generationSource)
     && /\bnew\s+PokemonSpecies\s*\(/.test(generationSource)
-  )
-  const legacy = (
-    /\bPokemonSpeciesData\b/.test(generationSource)
-    && !modern
-  )
-  if (!modern && !legacy) {
-    throw targetError(
-      'The detected species registry does not match a supported conservative adapter.',
-    )
+    && /\bgenerationOneSpeciesData\b/.test(generationSource)
+  if (!modern) throw targetError('Only the verified modern SpeciesDataMapConfig/PokemonSpecies registry is supported. Legacy or unfamiliar registries are refused.')
+  return 'modern'
+}
+
+function detectEncounterAdapters(files, root, sources) {
+  const adapters = []
+  for (const file of files) {
+    const relative = normalized(path.relative(root, file))
+    if (!SOURCE_EXTENSION.test(file) || !/(?:biome|encounter|wild)/i.test(relative)) continue
+    const source = sources.get(file) || ''
+    const biomes = new Set()
+    for (const match of source.matchAll(/\[(?:BiomeId|Biome)\.([A-Z][A-Z0-9_]*)\]\s*:\s*\[/g)) biomes.add(match[1])
+    if (biomes.size) adapters.push({ file: relative, kind: 'simple-species-array', biomes: [...biomes].sort() })
   }
-  return modern ? 'modern' : 'legacy'
+  return adapters
+}
+
+function symbolIssue(pathName, catalog, value) {
+  return {
+    severity: 'error',
+    path: pathName,
+    code: 'unknown-target-symbol',
+    message: `${value} does not exist in the selected checkout's ${catalog} enum.`,
+  }
+}
+
+function validateProjectSymbols(project, catalogs) {
+  const issues = []
+  function check(pathName, catalogName, value, optional = false) {
+    if (optional && !value) return
+    const catalog = catalogs[catalogName]
+    if (!catalog?.has(value)) issues.push(symbolIssue(pathName, catalogName, value || '(blank)'))
+  }
+  for (const stage of project?.stages || []) {
+    const stagePath = `stages.${stage.stageId}`
+    for (const [index, type] of (stage.types || []).entries()) check(`${stagePath}.types.${index}`, 'PokemonType', type)
+    for (const [index, ability] of (stage.abilities || []).entries()) check(`${stagePath}.abilities.${index}`, 'AbilityId', ability)
+    check(`${stagePath}.passive`, 'AbilityId', stage.passive, true)
+    check(`${stagePath}.growthRate`, 'GrowthRate', stage.growthRate)
+    for (const [index, move] of (stage.moves?.levelUp || []).entries()) check(`${stagePath}.moves.levelUp.${index}.moveId`, 'MoveId', move.moveId)
+    for (const list of ['tm', 'egg']) for (const [index, move] of (stage.moves?.[list] || []).entries()) check(`${stagePath}.moves.${list}.${index}`, 'MoveId', move)
+    for (const [formIndex, form] of (stage.forms || []).entries()) {
+      const formPath = `${stagePath}.forms.${formIndex}`
+      for (const [index, type] of (form.types || []).entries()) check(`${formPath}.types.${index}`, 'PokemonType', type)
+      for (const [index, ability] of (form.abilities || []).entries()) check(`${formPath}.abilities.${index}`, 'AbilityId', ability)
+      check(`${formPath}.passive`, 'AbilityId', form.passive, true)
+      check(`${formPath}.changeItem`, 'FormChangeItem', form.changeItem, true)
+    }
+  }
+  for (const [index, edge] of (project?.evolutionEdges || []).entries()) {
+    const pathName = `evolutionEdges.${index}.trigger`
+    if (edge.trigger?.type === 'item') check(`${pathName}.item`, 'EvolutionItem', edge.trigger.item)
+    if (edge.trigger?.type === 'time') check(`${pathName}.time`, 'TimeOfDay', edge.trigger.time)
+    if (edge.trigger?.type === 'move') check(`${pathName}.move`, 'MoveId', edge.trigger.move)
+  }
+  for (const [index, placement] of (project?.encounterPolicy?.placements || []).entries()) check(`encounterPolicy.placements.${index}.biome`, 'BiomeId', placement.biome)
+  return issues
+}
+
+async function readGitState(root) {
+  try {
+    const [{ stdout: revision }, { stdout: statusOutput }] = await Promise.all([
+      execFileAsync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }),
+      execFileAsync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8', windowsHide: true }),
+    ])
+    return { available: true, revision: revision.trim(), clean: !statusOutput.trim() }
+  } catch {
+    return { available: false, revision: null, clean: false }
+  }
+}
+
+function selectBuildScript(packageJson) {
+  const scripts = packageJson.scripts || {}
+  if (typeof scripts.typecheck === 'string') return 'typecheck'
+  if (typeof scripts.build === 'string') return 'build'
+  return null
+}
+
+function allocateStages(project, registry, storedBinding) {
+  const allocations = {}
+  const used = new Set(registry.ids)
+  let candidate = Math.max(1025, ...registry.ids) + 1
+  for (const stage of project?.stages || []) {
+    const stored = Number(storedBinding?.stageAllocations?.[stage.stageId])
+    if (Number.isInteger(stored) && stored > 1025 && !used.has(stored)) {
+      allocations[stage.stageId] = stored
+      used.add(stored)
+      continue
+    }
+    while (used.has(candidate)) candidate += 1
+    allocations[stage.stageId] = candidate
+    used.add(candidate)
+    candidate += 1
+  }
+  return allocations
 }
 
 export async function analyzePokeRogueTarget(targetDir, project = null) {
   const targetRoot = await realpath(path.resolve(targetDir)).catch(error => {
-    throw targetError(
-      `Could not open target checkout: ${error.message}`,
-      error.code === 'ENOENT' ? 404 : 400,
-    )
+    throw targetError(`Could not open target checkout: ${error.message}`, error.code === 'ENOENT' ? 404 : 400)
   })
-  if (!(await stat(targetRoot)).isDirectory()) {
-    throw targetError('Target path must be a directory.')
-  }
+  if (!(await stat(targetRoot)).isDirectory()) throw targetError('Target path must be a directory.')
 
   const { files, directories } = await walk(targetRoot)
-  const packageFile = choose(files, targetRoot, [
-    /^package\.json$/,
-    /\/package\.json$/,
-  ])
+  const packageFile = choose(files, targetRoot, [/^package\.json$/])
   const packageJson = await readPackageJson(packageFile)
-  const speciesId = choose(files, targetRoot, [
-    /(^|\/)src\/enums\/species-id\.tsx?$/,
-    /species[-_]id\.tsx?$/,
-    /species.*enum.*\.tsx?$/,
-  ])
-  const generation = choose(files, targetRoot, [
-    /(^|\/)src\/data\/balance\/species\/generation-0?1\.ts$/,
-    /generation-\d+\.ts$/,
-    /species.*data.*\.ts$/,
-  ])
-  if (!speciesId || !generation) {
-    throw targetError(
-      'This folder does not contain a recognizable PokéRogue species enum and species registry.',
-    )
-  }
+  const speciesId = choose(files, targetRoot, [/(^|\/)src\/enums\/species-id\.tsx?$/, /species[-_]id\.tsx?$/])
+  const generation = choose(files, targetRoot, [/(^|\/)src\/data\/balance\/species\/generation-0?1\.ts$/, /generation-0?1\.ts$/])
+  if (!speciesId || !generation) throw targetError('This folder does not contain the verified PokéRogue species enum and generation-one registry paths.')
 
-  const speciesSource = await readFile(speciesId, 'utf8')
-  const generationSource = await readFile(generation, 'utf8')
-  const registryKind = classifyRegistry(speciesSource, generationSource)
-  const eggMoves = choose(files, targetRoot, [
-    /egg-moves\.ts$/,
-    /egg.*move.*\.ts$/,
-  ])
-  const encounterFiles = files.filter(file => (
-    /(?:biome|encounter|wild|starter|trainer|boss|reward|mystery)/i
-      .test(normalized(path.relative(targetRoot, file)))
-    && /\.tsx?$/.test(file)
-  ))
-  const pokemonImages = directories.find(directory => (
-    /(?:^|[\\/])(?:assets|public)[\\/]images[\\/]pokemon$/i.test(directory)
-  )) || null
-  const pokemonIcons = directories.find(directory => (
-    /(?:^|[\\/])(?:assets|public)[\\/]images[\\/]pokemon[\\/](?:icons|icon)$/i
-      .test(directory)
-  )) || null
-  const cryDir = directories.find(directory => (
-    /(?:^|[\\/])(?:assets|public)[\\/]audio[\\/](?:cry|cries)$/i
-      .test(directory)
-  )) || null
+  const sourceFiles = files.filter(file => SOURCE_EXTENSION.test(file))
+  const sources = new Map()
+  await Promise.all(sourceFiles.map(async file => sources.set(file, await readOptional(file))))
+  const speciesSource = sources.get(speciesId) || ''
+  const generationSource = sources.get(generation) || ''
+  classifyRegistry(speciesSource, generationSource)
 
   const registry = parseSpeciesIds(speciesSource)
-  const highestId = Math.max(1025, ...registry.ids)
-  const stageAllocations = {}
-  let candidate = highestId + 1
-  for (const stage of project?.stages || []) {
-    while (registry.ids.has(candidate)) candidate += 1
-    stageAllocations[stage.stageId] = candidate
-    candidate += 1
-  }
+  const { catalogs, enumFiles } = await buildCatalogs(sourceFiles, targetRoot)
+  const requiredCatalogs = ['PokemonType', 'AbilityId', 'GrowthRate', 'MoveId']
+  const missingRequired = requiredCatalogs.filter(name => !catalogs[name]?.size)
+  if (missingRequired.length) throw targetError(`The checkout is missing required enum catalogs: ${missingRequired.join(', ')}.`)
 
-  const revision = await resolveGitRevision(targetRoot)
-  const packageVersion = String(packageJson.version || '')
+  const eggMoves = choose(files, targetRoot, [/(^|\/)src\/data\/balance\/moves\/egg-moves\.ts$/, /egg[-_]moves\.ts$/])
+  const encounterAdapters = detectEncounterAdapters(sourceFiles, targetRoot, sources)
+  const pokemonImages = directories.find(directory => /(?:^|[\\/])(?:assets|public)[\\/]images[\\/]pokemon$/i.test(directory)) || null
+  const pokemonIcons = directories.find(directory => /(?:^|[\\/])(?:assets|public)[\\/]images[\\/]pokemon[\\/](?:icons|icon)$/i.test(directory)) || null
+  const cryDir = directories.find(directory => /(?:^|[\\/])(?:assets|public)[\\/]audio[\\/](?:cry|cries)$/i.test(directory)) || null
+  const git = await readGitState(targetRoot)
+  const packageManager = files.some(file => path.basename(file) === 'pnpm-lock.yaml')
+    ? 'pnpm'
+    : files.some(file => path.basename(file) === 'yarn.lock') ? 'yarn' : 'npm'
+  const buildScript = selectBuildScript(packageJson)
+  const hasNodeModules = await exists(path.join(targetRoot, 'node_modules'))
+
   const relativeLayout = {
-    registryKind,
+    registryKind: 'modern',
     speciesId: normalized(path.relative(targetRoot, speciesId)),
     generation: normalized(path.relative(targetRoot, generation)),
     eggMoves: eggMoves ? normalized(path.relative(targetRoot, eggMoves)) : null,
-    pokemonImages: pokemonImages
-      ? normalized(path.relative(targetRoot, pokemonImages))
-      : null,
-    pokemonIcons: pokemonIcons
-      ? normalized(path.relative(targetRoot, pokemonIcons))
-      : null,
+    packageFile: packageFile ? normalized(path.relative(targetRoot, packageFile)) : null,
+    enumFiles,
+    pokemonImages: pokemonImages ? normalized(path.relative(targetRoot, pokemonImages)) : null,
+    pokemonIcons: pokemonIcons ? normalized(path.relative(targetRoot, pokemonIcons)) : null,
     cryDir: cryDir ? normalized(path.relative(targetRoot, cryDir)) : null,
-    encounterFiles: encounterFiles
-      .map(file => normalized(path.relative(targetRoot, file)))
-      .slice(0, 200),
+    encounterAdapters,
   }
-  const fingerprint = createHash('sha256')
-    .update(JSON.stringify({ packageVersion, revision, relativeLayout }))
-    .digest('hex')
+  const sourceHashes = Object.fromEntries([
+    speciesId,
+    generation,
+    eggMoves,
+    ...encounterAdapters.map(adapter => path.join(targetRoot, adapter.file)),
+  ].filter(Boolean).map(file => [normalized(path.relative(targetRoot, file)), hashText(sources.get(file) || '')]))
+  const packageVersion = String(packageJson.version || '')
+  const fingerprint = hashText(JSON.stringify({ packageVersion, revision: git.revision, relativeLayout, sourceHashes }))
+  const storedBinding = (project?.targetBindings || []).find(binding => path.resolve(binding.targetDir || '') === targetRoot)
+  const stageAllocations = allocateStages(project, registry, storedBinding)
 
-  const modern = registryKind === 'modern'
-  const forms = (
-    modern
-    && /\bPokemonForm\b/.test(generationSource)
-    && /\bnew\s+PokemonForm\s*\(/.test(generationSource)
-  )
-  const formChanges = (
-    forms
+  const forms = /\bPokemonForm\b/.test(generationSource) && /\bnew\s+PokemonForm\s*\(/.test(generationSource)
+  const formChanges = forms
     && /\bSpeciesFormChange\b/.test(generationSource)
     && /\bSpeciesFormChangeItemTrigger\b/.test(generationSource)
-    && /\bFormChangeItem\b/.test(generationSource)
-  )
-  const advancedEvolutionTriggers = (
-    modern
-    && /\bEvoCondKey\b/.test(generationSource)
-    && /\bTimeOfDay\b/.test(generationSource)
-    && /\bMoveId\b/.test(generationSource)
-  )
+    && Boolean(catalogs.FormChangeItem?.size)
+  const advancedEvolutionTriggers = /\bEvoCondKey\b/.test(generationSource)
+    && Boolean(catalogs.TimeOfDay?.size)
+    && Boolean(catalogs.MoveId?.size)
+  const validationIssues = validateProjectSymbols(project, catalogs)
+  if (!git.available) validationIssues.push({ severity: 'error', path: 'targetBindings', code: 'target-not-git', message: 'Transactional delivery requires a Git checkout so preflight can build an isolated worktree.' })
+  else if (!git.clean) validationIssues.push({ severity: 'error', path: 'targetBindings', code: 'dirty-target', message: 'Commit or stash target source changes before delivery.' })
+  if (!buildScript) validationIssues.push({ severity: 'error', path: 'targetBindings', code: 'missing-target-build', message: 'The checkout has no typecheck or build script for isolated preflight verification.' })
+  if (!hasNodeModules) validationIssues.push({ severity: 'error', path: 'targetBindings', code: 'missing-target-dependencies', message: 'Install the target checkout dependencies before delivery so isolated preflight can compile it.' })
+
   const capabilities = {
     species: true,
     evolutions: true,
     moves: true,
     eggMoves: Boolean(eggMoves),
-    encounters: encounterFiles.length > 0,
+    encounters: encounterAdapters.length > 0,
     sprites: Boolean(pokemonImages),
     icons: Boolean(pokemonIcons),
     cries: Boolean(cryDir),
@@ -244,77 +332,31 @@ export async function analyzePokeRogueTarget(targetDir, project = null) {
     advancedEvolutionTriggers,
     rollback: true,
     packages: true,
+    isolatedBuild: git.available && git.clean && Boolean(buildScript) && hasNodeModules,
   }
   const warnings = []
-  if (!eggMoves) {
-    warnings.push(
-      'Egg move registry was not detected; egg moves cannot be delivered to this checkout.',
-    )
-  }
-  if (!pokemonImages) {
-    warnings.push(
-      'Pokémon image directory was not detected; uploaded sprites cannot be delivered automatically.',
-    )
-  }
-  if (!pokemonIcons) {
-    warnings.push(
-      'Pokémon icon directory was not detected; uploaded icons cannot be delivered automatically.',
-    )
-  }
-  if (!cryDir) {
-    warnings.push(
-      'Cry directory was not detected; uploaded cries cannot be delivered automatically.',
-    )
-  }
-  if (!encounterFiles.length) {
-    warnings.push(
-      'Encounter tables were not detected; placement and suppression are unavailable for this checkout.',
-    )
-  }
-  if ((project?.stages || []).some(stage => stage.forms?.length) && !forms) {
-    warnings.push(
-      'Authored forms are preserved, but this checkout has no safely recognized PokemonForm registry anchors.',
-    )
-  }
-  if (
-    (project?.stages || []).some(stage => (
-      stage.forms?.some(form => form.changeItem)
-    ))
-    && !formChanges
-  ) {
-    warnings.push(
-      'Form-change items are authored, but this checkout has no safely recognized form-change constructors.',
-    )
-  }
-  if (
-    (project?.evolutionEdges || [])
-      .some(edge => ['friendship', 'time', 'move'].includes(edge.trigger?.type))
-    && !advancedEvolutionTriggers
-  ) {
-    warnings.push(
-      'Friendship, time, and move evolution conditions are authored, but this checkout lacks the required condition anchors.',
-    )
-  }
+  if (!eggMoves) warnings.push('Egg move registry was not detected; egg moves cannot be delivered to this checkout.')
+  if (!pokemonImages) warnings.push('Pokémon image directory was not detected; uploaded sprites cannot be delivered automatically.')
+  if (!pokemonIcons) warnings.push('Pokémon icon directory was not detected; uploaded icons cannot be delivered automatically.')
+  if (!cryDir) warnings.push('Cry directory was not detected; uploaded cries cannot be delivered automatically.')
+  if (!encounterAdapters.length) warnings.push('No supported simple biome species arrays were detected; encounter placement and suppression are unavailable.')
 
-  const adapter = modern
-    ? 'pokerogue-modern-source'
-    : 'pokerogue-legacy-source'
   return {
     targetId: `target_${fingerprint.slice(0, 16)}`,
     targetDir: targetRoot,
-    adapter,
+    adapter: 'pokerogue-modern-source',
     fingerprint,
-    version: packageVersion || revision?.slice(0, 12) || 'unversioned checkout',
-    revision,
-    packageManager: files.some(file => path.basename(file) === 'pnpm-lock.yaml')
-      ? 'pnpm'
-      : files.some(file => path.basename(file) === 'yarn.lock')
-        ? 'yarn'
-        : 'npm',
+    version: packageVersion || git.revision?.slice(0, 12) || 'unversioned checkout',
+    revision: git.revision,
+    git,
+    packageManager,
+    buildScript,
     layout: relativeLayout,
     capabilities,
+    catalogCounts: Object.fromEntries(Object.entries(catalogs).map(([name, values]) => [name, values?.size || 0])),
+    validationIssues,
     stageAllocations,
     warnings,
-    summary: `Detected ${adapter} with ${registry.ids.size} registered species and ${encounterFiles.length} encounter-related source files.`,
+    summary: `Detected the verified modern adapter with ${registry.ids.size} registered species, ${encounterAdapters.length} supported encounter file${encounterAdapters.length === 1 ? '' : 's'}, and ${validationIssues.length} blocking target issue${validationIssues.length === 1 ? '' : 's'}.`,
   }
 }
