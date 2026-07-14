@@ -577,9 +577,11 @@ describe('local companion API', () => {
     const failure = new Error('failure after end')
     const response = makeResponseDouble()
     const unhandledRejection = vi.fn()
+    const onError = vi.fn()
     const app = createApp({
       repository: makeRepository(),
       selectFolder: vi.fn(),
+      onError,
       staticHandler: async (incoming, outgoing) => {
         outgoing.writeHead(200, { 'content-type': 'text/plain' })
         outgoing.end('already complete')
@@ -598,6 +600,7 @@ describe('local companion API', () => {
     expect(response.writeHead).toHaveBeenCalledOnce()
     expect(response.end).toHaveBeenCalledOnce()
     expect(response.destroy).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledExactlyOnceWith(failure, expect.any(Object))
     expect(unhandledRejection).not.toHaveBeenCalled()
   })
 
@@ -605,9 +608,13 @@ describe('local companion API', () => {
     const failure = new Error('failure after headers')
     const response = makeResponseDouble()
     const unhandledRejection = vi.fn()
+    const onError = vi.fn(() => {
+      throw new Error('diagnostic callback failed')
+    })
     const app = createApp({
       repository: makeRepository(),
       selectFolder: vi.fn(),
+      onError,
       staticHandler: async (incoming, outgoing) => {
         outgoing.writeHead(200, { 'content-type': 'text/plain' })
         throw failure
@@ -625,6 +632,7 @@ describe('local companion API', () => {
     expect(response.writeHead).toHaveBeenCalledOnce()
     expect(response.end).not.toHaveBeenCalled()
     expect(response.destroy).toHaveBeenCalledExactlyOnceWith(failure)
+    expect(onError).toHaveBeenCalledExactlyOnceWith(failure, expect.any(Object))
     expect(unhandledRejection).not.toHaveBeenCalled()
   })
 })
@@ -728,18 +736,54 @@ describe('static file handler', () => {
     expect(response.text).not.toContain('outside secret bytes')
   })
 
-  it('stats and reads through the same opened canonical file handle', async () => {
+  it('refuses an outside file when an accepted directory is swapped before open', async () => {
+    const parent = await makeTemporaryDirectory()
+    const dist = path.join(parent, 'dist')
+    const safe = path.join(dist, 'safe')
+    const outside = path.join(parent, 'outside')
+    await mkdir(dist)
+    await mkdir(safe)
+    await mkdir(outside)
+    await writeFile(path.join(safe, 'asset.txt'), 'inside bytes')
+    await writeFile(path.join(outside, 'asset.txt'), 'outside secret bytes')
+    let swapped = false
+    const swapBeforeOpen = vi.fn(async (...args) => {
+      if (!swapped) {
+        swapped = true
+        await rm(safe, { recursive: true, force: true })
+        await symlink(outside, safe, process.platform === 'win32' ? 'junction' : 'dir')
+      }
+      return openFile(...args)
+    })
+    const server = await listen(createApp({
+      repository: makeRepository(),
+      selectFolder: vi.fn(),
+      staticHandler: createStaticHandler(dist, {
+        fileSystem: { realpath, open: swapBeforeOpen },
+      }),
+    }))
+
+    const response = await request(server, { pathname: '/safe/asset.txt' })
+
+    expect(swapped).toBe(true)
+    expect(response.statusCode).toBe(404)
+    expect(response.json).toEqual({ error: 'Static file not found.' })
+    expect(response.text).not.toContain('outside secret bytes')
+  })
+
+  it('reads through the original opened handle after an independent identity check', async () => {
     const dist = await makeTemporaryDirectory()
     const contents = 'single handle contents'
     await writeFile(path.join(dist, 'asset.txt'), contents)
-    let wrappedHandle
+    const wrappedHandles = []
     const openCanonicalFile = vi.fn(async (...args) => {
       const handle = await openFile(...args)
-      wrappedHandle = {
+      const wrappedHandle = {
         stat: vi.fn((...statArgs) => handle.stat(...statArgs)),
         readFile: vi.fn((...readArgs) => handle.readFile(...readArgs)),
         close: vi.fn((...closeArgs) => handle.close(...closeArgs)),
       }
+      wrappedHandles.push(wrappedHandle)
       return wrappedHandle
     })
     const server = await listen(createApp({
@@ -754,10 +798,42 @@ describe('static file handler', () => {
 
     expect(response.statusCode).toBe(200)
     expect(response.text).toBe(contents)
-    expect(openCanonicalFile).toHaveBeenCalledOnce()
-    expect(wrappedHandle.stat).toHaveBeenCalledOnce()
-    expect(wrappedHandle.readFile).toHaveBeenCalledOnce()
-    expect(wrappedHandle.close).toHaveBeenCalledOnce()
+    expect(openCanonicalFile).toHaveBeenCalledTimes(2)
+    expect(wrappedHandles).toHaveLength(2)
+    expect(wrappedHandles[0].stat).toHaveBeenCalledOnce()
+    expect(wrappedHandles[0].readFile).toHaveBeenCalledOnce()
+    expect(wrappedHandles[1].stat).toHaveBeenCalledOnce()
+    expect(wrappedHandles[1].readFile).not.toHaveBeenCalled()
+    expect(wrappedHandles[0].close).toHaveBeenCalledOnce()
+    expect(wrappedHandles[1].close).toHaveBeenCalledOnce()
+  })
+
+  it('refuses a canonical target whose post-open identity differs from the opened file', async () => {
+    const parent = await makeTemporaryDirectory()
+    const dist = path.join(parent, 'dist')
+    const outside = path.join(parent, 'outside.txt')
+    await mkdir(dist)
+    await writeFile(path.join(dist, 'asset.txt'), 'inside bytes')
+    await writeFile(outside, 'outside secret bytes')
+    const openCanonicalFile = vi.fn(async (...args) => (
+      openCanonicalFile.mock.calls.length === 1
+        ? openFile(...args)
+        : openFile(outside, 'r')
+    ))
+    const server = await listen(createApp({
+      repository: makeRepository(),
+      selectFolder: vi.fn(),
+      staticHandler: createStaticHandler(dist, {
+        fileSystem: { realpath, open: openCanonicalFile },
+      }),
+    }))
+
+    const response = await request(server, { pathname: '/asset.txt' })
+
+    expect(openCanonicalFile).toHaveBeenCalledTimes(2)
+    expect(response.statusCode).toBe(404)
+    expect(response.json).toEqual({ error: 'Static file not found.' })
+    expect(response.text).not.toContain('outside secret bytes')
   })
 
   it('returns false for missing files and directories', async () => {

@@ -101,13 +101,13 @@ function reportInternalError(onError, error, request) {
 }
 
 function sendError(response, request, error, onError) {
+  const statusCode = errorStatus(error)
+  if (statusCode >= 500) reportInternalError(onError, error, request)
   if (response.writableEnded) return
   if (response.headersSent) {
     response.destroy(error)
     return
   }
-  const statusCode = errorStatus(error)
-  if (statusCode >= 500) reportInternalError(onError, error, request)
   const message = statusCode >= 500
     ? 'Internal service error.'
     : error.message

@@ -33,6 +33,22 @@ function isInsideRoot(rootDir, candidate) {
   )
 }
 
+function isSameCanonicalPath(left, right) {
+  return path.relative(left, right) === '' && path.relative(right, left) === ''
+}
+
+function hasFileIdentity(stats) {
+  return (
+    (typeof stats?.dev === 'bigint' || Number.isSafeInteger(stats?.dev))
+    && (typeof stats?.ino === 'bigint' || Number.isSafeInteger(stats?.ino))
+  )
+}
+
+function hasSameFileIdentity(left, right) {
+  if (!hasFileIdentity(left) || !hasFileIdentity(right)) return false
+  return left.dev === right.dev && left.ino === right.ino
+}
+
 function resolvePublicPath(rootDir, requestUrl) {
   if (typeof requestUrl !== 'string' || !requestUrl.startsWith('/')) return undefined
   const queryStart = requestUrl.indexOf('?')
@@ -96,8 +112,25 @@ export function createStaticHandler(rootDir, { fileSystem: fileSystemOverrides }
     let handle
     try {
       handle = await fileSystem.open(canonicalFilePath, 'r')
-      const fileStats = await handle.stat()
+      const fileStats = await handle.stat({ bigint: true })
       if (!fileStats.isFile()) return false
+
+      const postOpenCanonicalPath = await fileSystem.realpath(filePath)
+      if (
+        !isInsideRoot(resolvedCanonicalRoot, postOpenCanonicalPath)
+        || !isSameCanonicalPath(canonicalFilePath, postOpenCanonicalPath)
+      ) return false
+
+      let identityHandle
+      let identityStats
+      try {
+        identityHandle = await fileSystem.open(postOpenCanonicalPath, 'r')
+        identityStats = await identityHandle.stat({ bigint: true })
+      } finally {
+        await identityHandle?.close()
+      }
+      if (!identityStats?.isFile?.() || !hasSameFileIdentity(fileStats, identityStats)) return false
+
       const body = request.method === 'GET' ? await handle.readFile() : undefined
 
       const contentLength = request.method === 'HEAD' ? fileStats.size : body.length
