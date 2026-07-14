@@ -1,4 +1,11 @@
-export function EvolutionStageStrip({ stages, activeStageId, onSelect, onAdd, onRemove }) {
+export function EvolutionStageStrip({
+  stages,
+  activeStageId,
+  onSelect,
+  onAdd,
+  onRemove,
+  removeDisabled = false,
+}) {
   return (
     <nav className="stage-strip" aria-label="Evolution stages">
       <span className="stage-strip-label">Evolution line</span>
@@ -12,7 +19,14 @@ export function EvolutionStageStrip({ stages, activeStageId, onSelect, onAdd, on
                 <span>{stage.name}</span>
               </button>
               {stages.length > 1 && (
-                <button type="button" className="stage-remove" aria-label={`Remove ${stage.name}`} onClick={() => onRemove(stage.stageId)}>×</button>
+                <button
+                  type="button"
+                  className="stage-remove"
+                  aria-label={`Remove ${stage.name}`}
+                  disabled={removeDisabled}
+                  title={removeDisabled ? 'Wait for autosave before removing a stage.' : ''}
+                  onClick={() => onRemove(stage.stageId)}
+                >×</button>
               )}
             </div>
           )
