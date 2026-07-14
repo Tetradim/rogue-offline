@@ -93,7 +93,11 @@ export async function runTargetPreflight({
   if (errors.length) {
     throw new Error(`Target is not ready: ${errors.map(item => `${item.path}: ${item.message}`).join('; ')}`)
   }
-  if (manifest.target?.adapter && manifest.target.adapter !== analysis.adapter) {
+  if (
+    manifest.target?.adapter
+    && manifest.target.adapter !== 'auto-detect'
+    && manifest.target.adapter !== analysis.adapter
+  ) {
     throw new Error(`Package adapter ${manifest.target.adapter} does not match detected adapter ${analysis.adapter}.`)
   }
   if (manifest.target?.fingerprint && manifest.target.fingerprint !== analysis.fingerprint) {

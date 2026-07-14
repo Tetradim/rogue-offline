@@ -343,6 +343,7 @@ function validateManifest(manifest, registry, layout) {
   }
   if (
     manifest.target?.adapter
+    && manifest.target.adapter !== 'auto-detect'
     && manifest.target.adapter !== 'pokerogue-modern-source'
   ) {
     die('Manifest targets an unsupported adapter.')
