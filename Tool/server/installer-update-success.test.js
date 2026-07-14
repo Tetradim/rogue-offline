@@ -169,7 +169,7 @@ describe('successful transactional update', () => {
     expect(generationSource).toContain('Second Category')
     expect(generationSource).not.toContain('First Category')
     expect(biomeSource.match(/MOD-STUDIO REPLACED emberline/g)).toHaveLength(1)
-    expect(biomeSource.match(/MOD-STUDIO SPAWN emberline/g)).toHaveLength(1)
+    expect(biomeSource.match(/SpeciesId\.EMBERCUB/g)).toHaveLength(1)
 
     const journal = JSON.parse(await readFile(
       path.join(target, '.pokerogue-mod-studio', 'mods', 'emberline', 'journal.json'),
