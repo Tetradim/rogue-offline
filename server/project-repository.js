@@ -99,20 +99,27 @@ async function cleanupFailedCreate(fileSystem, projectDir, initializationError) 
   throw initializationError
 }
 
-function enqueueProjectSave(saveQueues, projectDir, operation) {
-  const previousTail = saveQueues.get(projectDir) ?? Promise.resolve()
+function enqueueProjectSave(saveQueues, queueKey, operation) {
+  const previousTail = saveQueues.get(queueKey) ?? Promise.resolve()
   const result = previousTail.then(operation)
   const tail = result.then(
     () => undefined,
     () => undefined,
   )
-  saveQueues.set(projectDir, tail)
+  saveQueues.set(queueKey, tail)
 
   return result.finally(() => {
-    if (saveQueues.get(projectDir) === tail) {
-      saveQueues.delete(projectDir)
+    if (saveQueues.get(queueKey) === tail) {
+      saveQueues.delete(queueKey)
     }
   })
+}
+
+function normalizeProjectSaveQueueKey(projectDir) {
+  const normalizedProjectDir = path.normalize(path.resolve(projectDir))
+  return process.platform === 'win32'
+    ? normalizedProjectDir.toLowerCase()
+    : normalizedProjectDir
 }
 
 async function resolveProjectSaveQueueKey(fileSystem, resolvedProjectDir) {
@@ -126,10 +133,7 @@ async function resolveProjectSaveQueueKey(fileSystem, resolvedProjectDir) {
     )
   }
 
-  const normalizedProjectDir = path.normalize(path.resolve(canonicalProjectDir))
-  return process.platform === 'win32'
-    ? normalizedProjectDir.toLowerCase()
-    : normalizedProjectDir
+  return normalizeProjectSaveQueueKey(canonicalProjectDir)
 }
 
 export function createProjectRepository({
@@ -139,6 +143,7 @@ export function createProjectRepository({
 } = {}) {
   const fileSystem = { ...DEFAULT_FILE_SYSTEM, ...fileSystemOverrides }
   const saveQueues = new Map()
+  const inputPathSaveQueues = new Map()
   return {
     async create({ parentDir, name }) {
       const trimmedName = typeof name === 'string' ? name.trim() : ''
@@ -171,42 +176,45 @@ export function createProjectRepository({
 
     async save(projectDir, editedProject) {
       const resolvedProjectDir = path.resolve(projectDir)
-      const saveQueueKey = await resolveProjectSaveQueueKey(fileSystem, resolvedProjectDir)
-      return enqueueProjectSave(saveQueues, saveQueueKey, async () => {
-        const { canonicalPath, project: canonicalProject } = await readCanonicalProject(
-          fileSystem,
-          resolvedProjectDir,
-        )
-        const changedIdentityFields = IMMUTABLE_PROJECT_FIELDS.filter(field => (
-          editedProject?.[field] !== canonicalProject[field]
-        ))
-        if (changedIdentityFields.length) {
-          throw new Error(
-            `Project identity mismatch: ${changedIdentityFields.join(', ')} must match the canonical project.`,
+      const inputPathQueueKey = normalizeProjectSaveQueueKey(resolvedProjectDir)
+      return enqueueProjectSave(inputPathSaveQueues, inputPathQueueKey, async () => {
+        const saveQueueKey = await resolveProjectSaveQueueKey(fileSystem, resolvedProjectDir)
+        return enqueueProjectSave(saveQueues, saveQueueKey, async () => {
+          const { canonicalPath, project: canonicalProject } = await readCanonicalProject(
+            fileSystem,
+            resolvedProjectDir,
           )
-        }
-        if (!Number.isInteger(editedProject.revision) || editedProject.revision <= 0) {
-          throw new Error(
-            `Project validation failed for "${canonicalPath}": revision: Project revision must be a positive integer.`,
-          )
-        }
-        if (editedProject.revision < canonicalProject.revision) {
-          throw new Error(
-            `Cannot save stale project revision ${editedProject.revision}; canonical revision is ${canonicalProject.revision}.`,
-          )
-        }
+          const changedIdentityFields = IMMUTABLE_PROJECT_FIELDS.filter(field => (
+            editedProject?.[field] !== canonicalProject[field]
+          ))
+          if (changedIdentityFields.length) {
+            throw new Error(
+              `Project identity mismatch: ${changedIdentityFields.join(', ')} must match the canonical project.`,
+            )
+          }
+          if (!Number.isInteger(editedProject.revision) || editedProject.revision <= 0) {
+            throw new Error(
+              `Project validation failed for "${canonicalPath}": revision: Project revision must be a positive integer.`,
+            )
+          }
+          if (editedProject.revision < canonicalProject.revision) {
+            throw new Error(
+              `Cannot save stale project revision ${editedProject.revision}; canonical revision is ${canonicalProject.revision}.`,
+            )
+          }
 
-        const saved = {
-          ...editedProject,
-          slug: slugify(editedProject?.name),
-          revision: Math.max(canonicalProject.revision, editedProject?.revision) + 1,
-          updatedAt: resolveNow(now),
-        }
-        assertValidProject(saved, canonicalPath)
+          const saved = {
+            ...editedProject,
+            slug: slugify(editedProject?.name),
+            revision: Math.max(canonicalProject.revision, editedProject?.revision) + 1,
+            updatedAt: resolveNow(now),
+          }
+          assertValidProject(saved, canonicalPath)
 
-        await writeAutosave(resolvedProjectDir, saved)
-        await writeJsonAtomic(canonicalPath, saved)
-        return { projectDir: resolvedProjectDir, project: saved }
+          await writeAutosave(resolvedProjectDir, saved)
+          await writeJsonAtomic(canonicalPath, saved)
+          return { projectDir: resolvedProjectDir, project: saved }
+        })
       })
     },
   }

@@ -563,11 +563,28 @@ describe('portable project repository', () => {
 
   it('allows a later save to proceed after an earlier queued save fails', async () => {
     const parentDir = await makeTemporaryDirectory()
+    let releaseFirstIdentityLookup
+    const firstIdentityLookupGate = new Promise(resolve => {
+      releaseFirstIdentityLookup = resolve
+    })
+    let identityLookups = 0
+    let canonicalProjectDir
     const repository = createProjectRepository({
       now: () => '2026-07-13T12:00:00.000Z',
       idFactory: makeIdFactory(),
+      fileSystem: {
+        mkdir,
+        readFile,
+        rm,
+        realpath: async () => {
+          identityLookups += 1
+          if (identityLookups === 1) await firstIdentityLookupGate
+          return canonicalProjectDir
+        },
+      },
     })
     const created = await repository.create({ parentDir, name: 'Ember Line' })
+    canonicalProjectDir = created.projectDir
     const invalidSave = repository.save(created.projectDir, {
       ...structuredClone(created.project),
       name: '   ',
@@ -577,10 +594,29 @@ describe('portable project repository', () => {
       name: 'Recovered Save',
     })
 
-    await expect(invalidSave).rejects.toThrow(/Project name is required/i)
-    await expect(validSave).resolves.toMatchObject({
-      project: { name: 'Recovered Save', revision: 2 },
+    await Promise.resolve()
+    await Promise.resolve()
+    releaseFirstIdentityLookup()
+
+    const [invalidResult, validResult] = await Promise.allSettled([invalidSave, validSave])
+    expect(invalidResult.status).toBe('rejected')
+    expect(invalidResult.reason.message).toMatch(/Project name is required/i)
+    expect(validResult).toMatchObject({
+      status: 'fulfilled',
+      value: {
+        project: { name: 'Recovered Save', revision: 2 },
+      },
     })
+    expect(identityLookups).toBe(2)
+
+    const saved = validResult.value.project
+    const canonical = JSON.parse(await readFile(path.join(created.projectDir, 'project.json'), 'utf8'))
+    const autosave = JSON.parse(await readFile(
+      path.join(created.projectDir, '.studio', 'autosaves', '000002.json'),
+      'utf8',
+    ))
+    expect(canonical).toEqual(saved)
+    expect(autosave).toEqual(saved)
   })
 
   it('does not serialize saves for different project directories', async () => {
