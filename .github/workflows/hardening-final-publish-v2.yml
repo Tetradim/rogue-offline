@@ -1,0 +1,230 @@
+name: Publish hardened Mod Studio v2
+
+on:
+  push:
+    branches:
+      - fix/release-hardening
+    paths:
+      - '.github/workflows/hardening-final-publish-v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-publish:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out current hardening branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/release-hardening
+          fetch-depth: 0
+
+      - name: Apply deterministic final patches
+        shell: python
+        run: |
+          from pathlib import Path
+
+          preflight = Path('Tool/pokerogue-mod-target-preflight.mjs')
+          value = preflight.read_text()
+          old = "  if (manifest.target?.adapter && manifest.target.adapter !== analysis.adapter) {\n"
+          new = "  if (\n    manifest.target?.adapter\n    && manifest.target.adapter !== 'auto-detect'\n    && manifest.target.adapter !== analysis.adapter\n  ) {\n"
+          if old in value:
+              value = value.replace(old, new, 1)
+          if "manifest.target.adapter !== 'auto-detect'" not in value:
+              raise SystemExit('auto-detect preflight compatibility patch is missing')
+          preflight.write_text(value)
+
+          core = Path('Tool/installer-core.cjs')
+          value = core.read_text()
+          old = "    manifest.target?.adapter\n    && manifest.target.adapter !== 'pokerogue-modern-source'\n"
+          new = "    manifest.target?.adapter\n    && manifest.target.adapter !== 'auto-detect'\n    && manifest.target.adapter !== 'pokerogue-modern-source'\n"
+          if old in value:
+              value = value.replace(old, new, 1)
+          if "manifest.target.adapter !== 'auto-detect'" not in value:
+              raise SystemExit('auto-detect installer compatibility patch is missing')
+          core.write_text(value)
+
+          guard = Path('Tool/installer-runtime-guard.cjs')
+          value = guard.read_text()
+          helper = """function nearestExistingParent(candidate) {
+            let current = path.dirname(candidate)
+            while (!fs.existsSync(current)) {
+              const parent = path.dirname(current)
+              if (parent === current) {
+                throw new Error(`Could not resolve a contained parent for ${candidate}.`)
+              }
+              current = parent
+            }
+            return fs.realpathSync(current)
+          }
+
+          """
+          if 'function nearestExistingParent(candidate)' not in value:
+              marker = 'function validateContainedPath(\n'
+              if marker not in value:
+                  raise SystemExit('validateContainedPath marker missing')
+              value = value.replace(marker, helper + marker, 1)
+          value = value.replace(
+              '  const parent = fs.realpathSync(path.dirname(candidate))\n',
+              '  const parent = nearestExistingParent(candidate)\n',
+              1,
+          )
+          if 'const parent = nearestExistingParent(candidate)' not in value:
+              raise SystemExit('nearest-existing-parent containment patch is missing')
+          guard.write_text(value)
+
+          discovery = Path('Tool/server/target-discovery.js')
+          value = discovery.read_text()
+          value = value.replace(
+              "      execFileAsync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=no'], {\n",
+              "      execFileAsync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=all'], {\n",
+              1,
+          )
+          old = """    return {
+              available: true,
+              revision: revision.trim(),
+              clean: !statusOutput.trim(),
+              changedPaths: parseStatusPaths(statusOutput),
+            }
+          """
+          new = """    const changedPaths = parseStatusPaths(statusOutput).filter(candidate => (
+              candidate !== '.pokerogue-mod-studio'
+              && !candidate.startsWith('.pokerogue-mod-studio/')
+            ))
+            return {
+              available: true,
+              revision: revision.trim(),
+              clean: changedPaths.length === 0,
+              changedPaths,
+            }
+          """
+          if old in value:
+              value = value.replace(old, new, 1)
+          if '--untracked-files=all' not in value or "candidate.startsWith('.pokerogue-mod-studio/')" not in value:
+              raise SystemExit('untracked-source cleanliness patch is missing')
+          discovery.write_text(value)
+
+      - name: Finalize release commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          Remove-Item -Force -ErrorAction SilentlyContinue `
+            .github/workflows/hardening-final-publish.yml, `
+            .github/workflows/hardening-final-publish-v2.yml, `
+            .github/workflows/hardening-followup-patch.yml, `
+            .github/workflows/hardening-path-followup.yml
+          $report = 'Tool/BUILD_REPORT.md'
+          $evidence = @"
+
+          ## Final publication gate
+
+          Windows GitHub Actions run `$env:GITHUB_RUN_ID` validates the finalized hardening commit before it is pushed to `main`. The gate requires the full test suite, production build/postbuild, service and installer syntax, committed-range whitespace validation, and a production localhost smoke test. The commit is not published when any step fails.
+          "@
+          $text = Get-Content $report -Raw
+          if ($text -notmatch '## Final publication gate') {
+            Add-Content -Path $report -Value $evidence
+          }
+          git add -A
+          git commit -m "chore: finalize hardened release"
+          "FINAL_SHA=$(git rev-parse HEAD)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Tool/package-lock.json
+
+      - name: Install dependencies
+        working-directory: Tool
+        run: npm ci
+
+      - name: Run complete test suite
+        id: tests
+        continue-on-error: true
+        working-directory: Tool
+        run: npm test -- --reporter=json --outputFile=vitest-results.json
+
+      - name: Upload Vitest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardening-v2-vitest-results
+          path: Tool/vitest-results.json
+          if-no-files-found: error
+
+      - name: Enforce test result
+        if: steps.tests.outcome == 'failure'
+        run: throw 'Vitest failed. See the hardening-v2-vitest-results artifact.'
+
+      - name: Build production UI
+        id: build
+        continue-on-error: true
+        working-directory: Tool
+        run: |
+          & npm.cmd run build *> build.log
+          $code = $LASTEXITCODE
+          Get-Content build.log
+          exit $code
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardening-v2-build-log
+          path: Tool/build.log
+          if-no-files-found: error
+
+      - name: Enforce build result
+        if: steps.build.outcome == 'failure'
+        run: throw 'Production build failed. See the hardening-v2-build-log artifact.'
+
+      - name: Check service syntax
+        working-directory: Tool
+        run: npm run check:service
+
+      - name: Check installer syntax
+        working-directory: Tool
+        run: npm run check-installer
+
+      - name: Check committed hardening diff
+        run: |
+          git fetch origin main
+          git diff --check origin/main...HEAD -- Tool .github/workflows/mod-studio-verify.yml
+
+      - name: Smoke-test production localhost service
+        working-directory: Tool
+        run: |
+          $stdout = Join-Path $env:RUNNER_TEMP 'studio-stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'studio-stderr.log'
+          $process = Start-Process -FilePath node -ArgumentList @('server/index.js') -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $deadline = (Get-Date).AddSeconds(20)
+            do {
+              Start-Sleep -Milliseconds 100
+              $line = if (Test-Path $stdout) { Get-Content $stdout | Select-Object -First 1 } else { $null }
+            } while (-not $line -and (Get-Date) -lt $deadline)
+            if (-not $line) {
+              $details = if (Test-Path $stderr) { Get-Content $stderr -Raw } else { '' }
+              throw "Studio did not report a startup URL. $details"
+            }
+            $info = $line | ConvertFrom-Json
+            $response = Invoke-WebRequest -Uri $info.url -UseBasicParsing
+            if ($response.StatusCode -ne 200) { throw "Studio returned HTTP $($response.StatusCode)." }
+            if ($response.Content -notmatch '<div id="root"></div>') { throw 'Production page did not contain the React root.' }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
+      - name: Fast-forward branch and main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor origin/main HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Remote main changed and is not an ancestor of the verified commit.' }
+          git push origin HEAD:fix/release-hardening
+          git push origin HEAD:main
+          Write-Host "Published verified commit $env:FINAL_SHA"
