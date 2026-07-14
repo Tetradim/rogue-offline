@@ -7,6 +7,12 @@ on:
     paths:
       - 'Tool/**'
       - '.github/workflows/mod-studio-verify.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Tool/**'
+      - '.github/workflows/mod-studio-verify.yml'
   workflow_dispatch:
 
 permissions:
@@ -44,7 +50,7 @@ jobs:
       - name: Check service syntax
         run: npm run check:service
 
-      - name: Check legacy installer syntax
+      - name: Check installer syntax
         run: npm run check-installer
 
       - name: Check published diff whitespace
