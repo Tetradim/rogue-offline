@@ -10,8 +10,7 @@ import { selectWindowsFolder } from './windows-dialog.js'
 const modulePath = fileURLToPath(import.meta.url)
 const projectRoot = path.dirname(path.dirname(modulePath))
 
-function configuredPort(env) {
-  const value = env.POKEROGUE_STUDIO_PORT
+export function parsePort(value) {
   if (value === undefined) return 0
   if (typeof value !== 'string' || !/^\d+$/.test(value)) {
     throw new Error('POKEROGUE_STUDIO_PORT must be an integer from 0 through 65535.')
@@ -34,7 +33,7 @@ export async function startServer({
   stdout = process.stdout,
   spawnProcess = nodeSpawn,
 } = {}) {
-  const port = configuredPort(env)
+  const port = parsePort(env.POKEROGUE_STUDIO_PORT)
   const app = createApp({
     repository: createProjectRepository(),
     selectFolder: selectWindowsFolder,
@@ -71,10 +70,25 @@ export async function startServer({
   return { server, url }
 }
 
+export async function runCli({
+  env = process.env,
+  argv = process.argv.slice(2),
+  stdout = process.stdout,
+  stderr = process.stderr,
+  start = startServer,
+  processTarget = process,
+} = {}) {
+  try {
+    const started = await start({ env, argv, stdout })
+    return { exitCode: 0, started }
+  } catch (error) {
+    stderr.write(`Failed to start PokeRogue Mod Studio: ${error.message}\n`)
+    processTarget.exitCode = 1
+    return { exitCode: 1, error }
+  }
+}
+
 const invokedModule = process.argv[1] ? path.resolve(process.argv[1]) : ''
 if (invokedModule.toLowerCase() === path.resolve(modulePath).toLowerCase()) {
-  startServer().catch(error => {
-    console.error(`Failed to start PokeRogue Mod Studio: ${error.message}`)
-    process.exitCode = 1
-  })
+  void runCli()
 }

@@ -99,7 +99,21 @@ export function mutationOriginAllowed(request) {
   if (typeof origin !== 'string' || typeof request.headers.host !== 'string') return false
 
   try {
-    return new URL(origin).host.toLowerCase() === request.headers.host.trim().toLowerCase()
+    const parsedOrigin = new URL(origin)
+    const isHttpOrigin = parsedOrigin.protocol === 'http:' || parsedOrigin.protocol === 'https:'
+    const isOriginOnly = (
+      parsedOrigin.username === ''
+      && parsedOrigin.password === ''
+      && parsedOrigin.pathname === '/'
+      && parsedOrigin.search === ''
+      && parsedOrigin.hash === ''
+      && (origin === parsedOrigin.origin || origin === `${parsedOrigin.origin}/`)
+    )
+    return (
+      isHttpOrigin
+      && isOriginOnly
+      && parsedOrigin.host.toLowerCase() === request.headers.host.trim().toLowerCase()
+    )
   } catch {
     return false
   }

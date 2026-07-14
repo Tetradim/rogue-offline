@@ -1,11 +1,14 @@
 // @vitest-environment node
 
-import { createServer, request as requestHttp } from 'node:http'
+import childProcess from 'node:child_process'
+import http, { createServer, request as requestHttp } from 'node:http'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from './app.js'
+import { mutationOriginAllowed } from './http-utils.js'
 import { startServer } from './index.js'
 import { createStaticHandler } from './static-files.js'
 import { selectWindowsFolder } from './windows-dialog.js'
@@ -94,6 +97,28 @@ function makeRepository(overrides = {}) {
     })),
     ...overrides,
   }
+}
+
+function makeResponseDouble() {
+  const response = {
+    headersSent: false,
+    writableEnded: false,
+    setHeader: vi.fn(),
+    writeHead: vi.fn(() => {
+      response.headersSent = true
+    }),
+    end: vi.fn(() => {
+      response.writableEnded = true
+    }),
+    destroy: vi.fn(() => {
+      response.writableEnded = true
+    }),
+  }
+  return response
+}
+
+async function flushListenerWork() {
+  await new Promise(resolve => setImmediate(resolve))
 }
 
 async function startApp(overrides = {}) {
@@ -229,6 +254,27 @@ describe('local companion API', () => {
     expect(dialog.statusCode).toBe(405)
     expect(dialog.headers.allow).toBe('POST')
   })
+
+  it.each([
+    ['DELETE', '/api/projects', 'POST, PUT'],
+    ['PATCH', '/api/dialog/folder', 'POST'],
+    ['POST', '/api/health', 'GET, HEAD'],
+  ])(
+    'returns 405 for %s %s before checking a supplied foreign Origin',
+    async (method, pathname, allow) => {
+      const { server } = await startApp()
+
+      const response = await request(server, {
+        method,
+        pathname,
+        headers: { origin: 'https://example.test' },
+      })
+
+      expect(response.statusCode).toBe(405)
+      expect(response.headers.allow).toBe(allow)
+      expect(response.json).toEqual({ error: 'Method not allowed.' })
+    },
+  )
 
   it('reports unsupported, malformed, and oversized JSON bodies as 4xx errors', async () => {
     const repository = makeRepository()
@@ -366,6 +412,18 @@ describe('local companion API', () => {
     expect(selectFolder).toHaveBeenCalledTimes(2)
   })
 
+  it.each([
+    'https://127.0.0.1:43123/path',
+    'https://user@127.0.0.1:43123',
+    'https://127.0.0.1:43123?x=1',
+    'https://127.0.0.1:43123#x',
+    'ftp://127.0.0.1:43123',
+  ])('rejects a non-origin-only Origin value: %s', origin => {
+    expect(mutationOriginAllowed({
+      headers: { host: '127.0.0.1:43123', origin },
+    })).toBe(false)
+  })
+
   it('invokes static serving only for non-API GET and HEAD requests', async () => {
     const staticHandler = vi.fn(async (incoming, response) => {
       if (incoming.url === '/') {
@@ -387,6 +445,61 @@ describe('local companion API', () => {
     expect(missingHead.body).toHaveLength(0)
     expect(nonGet.statusCode).toBe(404)
     expect(staticHandler.mock.calls.map(([incoming]) => incoming.method)).toEqual(['GET', 'HEAD'])
+  })
+
+  it('does not send again or leak a rejection when a static handler ends then rejects', async () => {
+    const failure = new Error('failure after end')
+    const response = makeResponseDouble()
+    const unhandledRejection = vi.fn()
+    const app = createApp({
+      repository: makeRepository(),
+      selectFolder: vi.fn(),
+      staticHandler: async (incoming, outgoing) => {
+        outgoing.writeHead(200, { 'content-type': 'text/plain' })
+        outgoing.end('already complete')
+        throw failure
+      },
+    })
+    process.on('unhandledRejection', unhandledRejection)
+
+    try {
+      app({ method: 'GET', url: '/', headers: {} }, response)
+      await flushListenerWork()
+    } finally {
+      process.off('unhandledRejection', unhandledRejection)
+    }
+
+    expect(response.writeHead).toHaveBeenCalledOnce()
+    expect(response.end).toHaveBeenCalledOnce()
+    expect(response.destroy).not.toHaveBeenCalled()
+    expect(unhandledRejection).not.toHaveBeenCalled()
+  })
+
+  it('destroys without a second write when a static handler writes headers then rejects', async () => {
+    const failure = new Error('failure after headers')
+    const response = makeResponseDouble()
+    const unhandledRejection = vi.fn()
+    const app = createApp({
+      repository: makeRepository(),
+      selectFolder: vi.fn(),
+      staticHandler: async (incoming, outgoing) => {
+        outgoing.writeHead(200, { 'content-type': 'text/plain' })
+        throw failure
+      },
+    })
+    process.on('unhandledRejection', unhandledRejection)
+
+    try {
+      app({ method: 'GET', url: '/', headers: {} }, response)
+      await flushListenerWork()
+    } finally {
+      process.off('unhandledRejection', unhandledRejection)
+    }
+
+    expect(response.writeHead).toHaveBeenCalledOnce()
+    expect(response.end).not.toHaveBeenCalled()
+    expect(response.destroy).toHaveBeenCalledExactlyOnceWith(failure)
+    expect(unhandledRejection).not.toHaveBeenCalled()
   })
 })
 
@@ -516,6 +629,77 @@ describe('Windows folder picker', () => {
 })
 
 describe('local server startup', () => {
+  it('imports without creating a server or spawning an opener', async () => {
+    const originalCreateServer = http.createServer
+    const originalSpawn = childProcess.spawn
+    const originalArgv = [...process.argv]
+    const originalExitCode = process.exitCode
+    const fakeServer = {
+      once: vi.fn(),
+      off: vi.fn(),
+      listen: vi.fn((port, host, callback) => callback()),
+      address: vi.fn(() => ({ port: 43123 })),
+      close: vi.fn(callback => callback()),
+    }
+    const createServerSpy = vi.fn(() => fakeServer)
+    const spawnSpy = vi.fn(() => ({ unref: vi.fn() }))
+    http.createServer = createServerSpy
+    childProcess.spawn = spawnSpy
+    process.argv.push('--open')
+    syncBuiltinESMExports()
+    let importedExitCode
+
+    try {
+      await import('./index.js?side-effect-check')
+      await flushListenerWork()
+      importedExitCode = process.exitCode
+    } finally {
+      http.createServer = originalCreateServer
+      childProcess.spawn = originalSpawn
+      process.argv.splice(0, process.argv.length, ...originalArgv)
+      process.exitCode = originalExitCode
+      syncBuiltinESMExports()
+    }
+
+    expect(createServerSpy).not.toHaveBeenCalled()
+    expect(spawnSpy).not.toHaveBeenCalled()
+    expect(importedExitCode).toBe(originalExitCode)
+  })
+
+  it('exposes pure port parsing without starting a server', async () => {
+    const { parsePort } = await import('./index.js')
+
+    expect(parsePort(undefined)).toBe(0)
+    expect(parsePort('43123')).toBe(43123)
+    expect(() => parsePort('1.5')).toThrow(/POKEROGUE_STUDIO_PORT.*integer.*0.*65535/i)
+  })
+
+  it('reports an injected startup failure and returns nonzero behavior without mutating process', async () => {
+    const { runCli } = await import('./index.js')
+    const failure = new Error('injected listen failure')
+    const start = vi.fn(async () => { throw failure })
+    const stderr = { write: vi.fn() }
+    const processTarget = { exitCode: undefined }
+    const originalExitCode = process.exitCode
+
+    const result = await runCli({
+      env: { POKEROGUE_STUDIO_PORT: '43123' },
+      argv: ['--open'],
+      stdout: { write: vi.fn() },
+      stderr,
+      start,
+      processTarget,
+    })
+
+    expect(start).toHaveBeenCalledOnce()
+    expect(result).toEqual({ exitCode: 1, error: failure })
+    expect(processTarget.exitCode).toBe(1)
+    expect(process.exitCode).toBe(originalExitCode)
+    expect(stderr.write).toHaveBeenCalledExactlyOnceWith(
+      'Failed to start PokeRogue Mod Studio: injected listen failure\n',
+    )
+  })
+
   it('binds loopback on an ephemeral port, reports one startup line, and opens on request', async () => {
     const writes = []
     const spawnCalls = []

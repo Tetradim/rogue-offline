@@ -91,11 +91,6 @@ export function createApp({ repository, selectFolder, staticHandler }) {
     const pathname = request.url.split('?', 1)[0]
 
     if (isApiPath(pathname)) {
-      if (request.method !== 'GET' && request.method !== 'HEAD' && !mutationOriginAllowed(request)) {
-        sendJson(response, 403, { error: 'Origin does not match this local service.' })
-        return
-      }
-
       const allowedMethods = ROUTE_METHODS.get(pathname)
       if (!allowedMethods) {
         sendJson(response, 404, { error: 'API route not found.' }, {
@@ -105,6 +100,11 @@ export function createApp({ repository, selectFolder, staticHandler }) {
       }
       if (!allowedMethods.includes(request.method)) {
         sendMethodNotAllowed(response, request, allowedMethods)
+        return
+      }
+
+      if (request.method !== 'GET' && request.method !== 'HEAD' && !mutationOriginAllowed(request)) {
+        sendJson(response, 403, { error: 'Origin does not match this local service.' })
         return
       }
 
