@@ -12,27 +12,13 @@ export default function App() {
   const save = useCallback((projectDir, project) => studioApi.saveProject(projectDir, project), [])
   const onSaving = useCallback(() => dispatch({ type: 'saving' }), [])
   const onSaved = useCallback(payload => dispatch({ type: 'saved', payload }), [])
-  const onError = useCallback(error => dispatch({
-    type: 'save-failed',
-    error: error instanceof Error ? error.message : String(error),
-  }), [])
+  const onError = useCallback(error => dispatch({ type: 'save-failed', error: error instanceof Error ? error.message : String(error) }), [])
 
-  useAutosave({
-    dirty: session.dirty,
-    projectDir: session.projectDir,
-    project: session.project,
-    save,
-    onSaving,
-    onSaved,
-    onError,
-  })
+  useAutosave({ dirty: session.dirty, projectDir: session.projectDir, project: session.project, save, onSaving, onSaved, onError })
 
   useEffect(() => {
     if (!session.dirty) return undefined
-    const warnBeforeUnload = event => {
-      event.preventDefault()
-      event.returnValue = ''
-    }
+    const warnBeforeUnload = event => { event.preventDefault(); event.returnValue = '' }
     window.addEventListener('beforeunload', warnBeforeUnload)
     return () => window.removeEventListener('beforeunload', warnBeforeUnload)
   }, [session.dirty])
@@ -45,21 +31,18 @@ export default function App() {
     dispatch({ type: 'closed' })
   }, [session.dirty, session.saveState])
 
-  if (!session.project) {
-    return <DashboardPage api={studioApi} onOpen={payload => dispatch({ type: 'opened', payload })} />
-  }
+  if (!session.project) return <DashboardPage api={studioApi} onOpen={payload => dispatch({ type: 'opened', payload })} />
 
-  return (
-    <EditorPage
-      project={session.project}
-      projectDir={session.projectDir}
-      saveState={session.saveState}
-      saveError={session.error}
-      pokemon={pokemonState.pokemon}
-      pokemonLoading={pokemonState.loading}
-      pokemonError={pokemonState.error}
-      onChange={project => dispatch({ type: 'draft-changed', project })}
-      onClose={closeProject}
-    />
-  )
+  return <EditorPage
+    api={studioApi}
+    project={session.project}
+    projectDir={session.projectDir}
+    saveState={session.saveState}
+    saveError={session.error}
+    pokemon={pokemonState.pokemon}
+    pokemonLoading={pokemonState.loading}
+    pokemonError={pokemonState.error}
+    onChange={project => dispatch({ type: 'draft-changed', project })}
+    onClose={closeProject}
+  />
 }

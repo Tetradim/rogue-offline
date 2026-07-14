@@ -1,4 +1,5 @@
 import { calculateBst, setStageField, setStageStat } from '../../../shared/project-schema.js'
+import { MoveFormEditor } from './MoveFormEditor.jsx'
 import { StatSlider } from './StatSlider.jsx'
 
 const TYPES = ['NORMAL', 'FIRE', 'WATER', 'ELECTRIC', 'GRASS', 'ICE', 'FIGHTING', 'POISON', 'GROUND', 'FLYING', 'PSYCHIC', 'BUG', 'ROCK', 'GHOST', 'DRAGON', 'DARK', 'STEEL', 'FAIRY']
@@ -37,9 +38,9 @@ export function BuildTab({ project, stage, onChange }) {
     <div className="build-sheet">
       <div className="build-heading">
         <div>
-          <span className="panel-kicker">Blank custom stage</span>
+          <span className="panel-kicker">Custom stage authoring</span>
           <h1>{stage.name}</h1>
-          <p>Author neutral custom data without modifying an official species.</p>
+          <p>Author portable species data without modifying an official Pokémon.</p>
         </div>
         <div className="stage-identity" title="Stage IDs remain stable when names and slugs change">
           <span>Immutable stage ID</span><code>{stage.stageId}</code>
@@ -66,6 +67,7 @@ export function BuildTab({ project, stage, onChange }) {
           <div className="card-heading"><h2>Battle data</h2><span className="card-accent blue">Core</span></div>
           <label>Primary ability<input value={stage.abilities[0] || ''} placeholder="BLAZE" onChange={event => updateField('abilities', event.target.value ? [token(event.target.value), ...stage.abilities.slice(1)] : stage.abilities.slice(1))} /></label>
           <label>Secondary ability<input value={stage.abilities[1] || ''} placeholder="Optional" onChange={event => updateField('abilities', [stage.abilities[0], token(event.target.value)].filter(Boolean))} /></label>
+          <label>Hidden ability<input value={stage.abilities[2] || ''} placeholder="Optional" onChange={event => updateField('abilities', [stage.abilities[0], stage.abilities[1], token(event.target.value)].filter(Boolean))} /></label>
           <label>Passive<input value={stage.passive} placeholder="Optional passive" onChange={event => updateField('passive', token(event.target.value))} /></label>
           <div className="field-pair">
             <label>Height (m)<input type="number" min="0.1" max="9999" step="0.1" value={stage.height} onChange={event => updateField('height', Number(event.target.value))} /></label>
@@ -90,18 +92,12 @@ export function BuildTab({ project, stage, onChange }) {
             <strong className="bst-pill">BST {calculateBst(stage)}</strong>
           </div>
           <div className="stat-list">
-            {STATS.map(([name, label]) => (
-              <StatSlider
-                key={name}
-                label={label}
-                value={stage.baseStats[name]}
-                onChange={value => onChange(setStageStat(project, stage.stageId, name, value))}
-              />
-            ))}
+            {STATS.map(([name, label]) => <StatSlider key={name} label={label} value={stage.baseStats[name]} onChange={value => onChange(setStageStat(project, stage.stageId, name, value))} />)}
           </div>
-          <p className="stat-note">Values are clamped from 1 to 255. Balance warnings and target-specific validation are added in the Review workflow.</p>
+          <p className="stat-note">Values are clamped from 1 to 255. The Review tab reports balance and target compatibility warnings.</p>
         </section>
       </div>
+      <MoveFormEditor project={project} stage={stage} onChange={onChange} />
     </div>
   )
 }
