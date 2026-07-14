@@ -41,7 +41,7 @@ describe('BuildTab', () => {
     render(<BuildTab project={project} stage={project.stages[0]} onChange={onChange} />)
 
     const secondary = screen.getByLabelText('Secondary type')
-    expect(screen.getByRole('option', { name: 'NORMAL' }, { selector: 'option' })).toBeDefined()
+    expect(secondary.querySelector('option[value="NORMAL"]')).toBeDisabled()
     await user.selectOptions(secondary, 'FIRE')
     const withSecondary = onChange.mock.calls.at(-1)[0]
     expect(withSecondary.stages[0].types).toEqual(['NORMAL', 'FIRE'])
