@@ -20,7 +20,7 @@ function completeStage(project, stageId, name, type = 'FIRE') {
 
 describe('project authoring domain', () => {
   it('authors moves, forms, branches, encounters, assets, and target allocations', () => {
-    const ids = ['project-1', 'stage-1', 'stage-2', 'edge-1', 'form-1', 'placement-1']
+    const ids = ['project-1', 'stage-1', 'stage-2', 'form-1', 'edge-1', 'placement-1']
     let project = createBlankProject({ name: 'Emberline', idFactory: () => ids.shift(), now: () => '2026-07-14T00:00:00.000Z' })
     project = addBlankStage(project, { idFactory: () => ids.shift(), now: () => '2026-07-14T00:00:00.000Z' })
     project = completeStage(project, 'stage-1', 'Embercub')

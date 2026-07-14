@@ -2,8 +2,8 @@
 setlocal
 cd /d "%~dp0"
 if "%~1"=="" (
-  echo Drag a pokerogue-mod-project.json file onto this BAT, or run:
-  echo   Install-Mod.bat manifest.json C:\path\to\rogue-offline
+  echo Drag a PokéRogue Mod Studio manifest or package onto this BAT, or run:
+  echo   Install-Mod.bat my-mod.pokerogue-mod-package.json C:\path\to\rogue-offline
   pause
   exit /b 1
 )
@@ -14,11 +14,11 @@ if "%~2"=="" (
 )
 echo.
 echo Running safety preflight...
-node pokerogue-mod-installer.cjs --manifest "%~1" --project "%GAME_ROOT%" --dry-run || goto :failed
+node pokerogue-mod-package-installer.cjs --input "%~1" --project "%GAME_ROOT%" --dry-run || goto :failed
 echo.
 choice /M "Preflight passed. Apply this mod"
 if errorlevel 2 exit /b 0
-node pokerogue-mod-installer.cjs --manifest "%~1" --project "%GAME_ROOT%" || goto :failed
+node pokerogue-mod-package-installer.cjs --input "%~1" --project "%GAME_ROOT%" || goto :failed
 echo.
 echo Installation complete. Rebuild and launch PokéRogue.
 pause

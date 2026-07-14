@@ -10,8 +10,8 @@
     "build": "vite build",
     "postbuild": "node postbuild.js",
     "preview": "vite preview",
-    "check:service": "node --check server/index.js",
-    "check-installer": "node --check pokerogue-mod-installer.cjs",
+    "check:service": "node --check server/index.js && node --check server/app.js && node --check server/target-discovery.js && node --check server/delivery-service.js",
+    "check-installer": "node --check pokerogue-mod-installer.cjs && node --check pokerogue-mod-package-installer.cjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
