@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { createBlankProject } from '../../../shared/project-schema.js'
+import { addBlankStage, createBlankProject } from '../../../shared/project-schema.js'
 import { EditorPage } from './EditorPage.jsx'
 
 function renderEditor(overrides = {}) {
@@ -54,6 +54,22 @@ describe('EditorPage', () => {
     }
     await user.click(screen.getByRole('tab', { name: 'Encounters' }))
     expect(screen.getByText(/keep, suppress, or replace/i)).toBeInTheDocument()
+  })
+
+  it('preserves the selected stage when a different stage is removed', async () => {
+    const user = userEvent.setup()
+    let project = createBlankProject({ name: 'Emberline' })
+    project = addBlankStage(project)
+    project = addBlankStage(project)
+    const { onChange } = renderEditor({ project })
+
+    const thirdStage = screen.getByRole('button', { name: /custom stage 3/i })
+    await user.click(thirdStage)
+    expect(thirdStage).toHaveAttribute('aria-current', 'step')
+    await user.click(screen.getByRole('button', { name: /remove custom stage 1/i }))
+
+    expect(thirdStage).toHaveAttribute('aria-current', 'step')
+    expect(onChange.mock.calls.at(-1)[0].stages).toHaveLength(2)
   })
 
   it('surfaces autosave failures in the editor', () => {
