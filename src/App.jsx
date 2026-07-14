@@ -1,11 +1,14 @@
 import { useCallback, useReducer } from 'react'
 import { studioApi } from './api/client.js'
+import { EditorPage } from './features/editor/EditorPage.jsx'
 import { DashboardPage } from './features/projects/DashboardPage.jsx'
 import { useAutosave } from './hooks/useAutosave.js'
+import { usePokemonData } from './hooks/usePokemonData.js'
 import { initialProjectState, projectReducer } from './state/projectReducer.js'
 
 export default function App() {
   const [session, dispatch] = useReducer(projectReducer, initialProjectState)
+  const pokemonState = usePokemonData()
   const save = useCallback((projectDir, project) => studioApi.saveProject(projectDir, project), [])
   const onSaving = useCallback(() => dispatch({ type: 'saving' }), [])
   const onSaved = useCallback(payload => dispatch({ type: 'saved', payload }), [])
@@ -29,16 +32,16 @@ export default function App() {
   }
 
   return (
-    <main className="dashboard-shell">
-      <section className="dialog-card">
-        <p className="eyebrow">Portable project open</p>
-        <h1>{session.project.name}</h1>
-        <p>The project is open at {session.projectDir}.</p>
-        <p className="muted">Editor modules are loading from the current implementation phase.</p>
-        <button className="button button-secondary" onClick={() => dispatch({ type: 'closed' })}>
-          Back to Projects
-        </button>
-      </section>
-    </main>
+    <EditorPage
+      project={session.project}
+      projectDir={session.projectDir}
+      saveState={session.saveState}
+      saveError={session.error}
+      pokemon={pokemonState.pokemon}
+      pokemonLoading={pokemonState.loading}
+      pokemonError={pokemonState.error}
+      onChange={project => dispatch({ type: 'draft-changed', project })}
+      onClose={() => dispatch({ type: 'closed' })}
+    />
   )
 }
