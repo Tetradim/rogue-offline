@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { addBlankStage, removeStage } from '../../../shared/project-schema.js'
+import { addBlankStage } from '../../../shared/project-schema.js'
 import { AssetsTab } from './AssetsTab.jsx'
 import { BuildTab } from './BuildTab.jsx'
 import { EncountersTab } from './EncountersTab.jsx'
@@ -33,17 +33,21 @@ export function EditorPage({
   pokemonLoading = false,
   pokemonError = null,
   onChange,
+  onServerSaved,
   onClose,
 }) {
   const [activeStageId, setActiveStageId] = useState(project.stages[0].stageId)
   const [official, setOfficial] = useState(null)
   const [activeTab, setActiveTab] = useState('build')
+  const [operationError, setOperationError] = useState('')
+  const [stageBusy, setStageBusy] = useState(false)
 
   useEffect(() => {
     if (!project.stages.some(stage => stage.stageId === activeStageId)) setActiveStageId(project.stages[0].stageId)
   }, [project.stages, activeStageId])
 
   const activeStage = project.stages.find(stage => stage.stageId === activeStageId) || project.stages[0]
+  const canonicalReady = saveState === 'saved'
 
   function addStage() {
     const next = addBlankStage(project)
@@ -51,20 +55,29 @@ export function EditorPage({
     onChange(next)
   }
 
-  function deleteStage(stageId) {
+  async function deleteStage(stageId) {
+    if (!canonicalReady || stageBusy) return
     const index = project.stages.findIndex(stage => stage.stageId === stageId)
-    const next = removeStage(project, stageId)
-    if (next === project) return
-    if (stageId === activeStageId) setActiveStageId(next.stages[Math.min(index, next.stages.length - 1)].stageId)
-    onChange(next)
+    setStageBusy(true)
+    setOperationError('')
+    try {
+      const payload = await api.removeStage(projectDir, project, stageId)
+      const nextStages = payload.project.stages
+      if (stageId === activeStageId) setActiveStageId(nextStages[Math.min(index, nextStages.length - 1)].stageId)
+      onServerSaved(payload)
+    } catch (cause) {
+      setOperationError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setStageBusy(false)
+    }
   }
 
   let panel
   if (activeTab === 'build') panel = <BuildTab project={project} stage={activeStage} onChange={onChange} />
   if (activeTab === 'evolution') panel = <EvolutionTab project={project} activeStage={activeStage} onChange={onChange} />
-  if (activeTab === 'assets') panel = <AssetsTab api={api} project={project} projectDir={projectDir} stage={activeStage} onChange={onChange} />
+  if (activeTab === 'assets') panel = <AssetsTab api={api} project={project} projectDir={projectDir} stage={activeStage} saveState={saveState} onServerSaved={onServerSaved} />
   if (activeTab === 'encounters') panel = <EncountersTab project={project} official={official} onChange={onChange} />
-  if (activeTab === 'review') panel = <ReviewTab api={api} project={project} projectDir={projectDir} onChange={onChange} />
+  if (activeTab === 'review') panel = <ReviewTab api={api} project={project} projectDir={projectDir} saveState={saveState} onChange={onChange} />
 
   return (
     <div className="studio-shell">
@@ -76,10 +89,18 @@ export function EditorPage({
         <button type="button" className="button button-ghost project-back" onClick={onClose}>Projects</button>
       </header>
       {saveState === 'error' && saveError && <div className="save-error" role="alert">Autosave failed: {saveError}</div>}
+      {operationError && <div className="save-error" role="alert">Project operation failed: {operationError}</div>}
       <div className="studio-workspace">
         <OfficialPokedex pokemon={pokemon} loading={pokemonLoading} error={pokemonError} selected={official} onSelect={setOfficial} />
         <main className="editor-panel">
-          <EvolutionStageStrip stages={project.stages} activeStageId={activeStage.stageId} onSelect={setActiveStageId} onAdd={addStage} onRemove={deleteStage} />
+          <EvolutionStageStrip
+            stages={project.stages}
+            activeStageId={activeStage.stageId}
+            onSelect={setActiveStageId}
+            onAdd={addStage}
+            onRemove={deleteStage}
+            removeDisabled={!canonicalReady || stageBusy}
+          />
           <div className="editor-tabs" role="tablist" aria-label="Project editor sections">
             {TABS.map(([id, label]) => <button type="button" key={id} role="tab" aria-selected={activeTab === id} className={activeTab === id ? 'active' : ''} onClick={() => setActiveTab(id)}>{label}</button>)}
           </div>
