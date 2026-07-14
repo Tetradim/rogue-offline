@@ -42,7 +42,21 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        run: npm test
+        id: tests
+        continue-on-error: true
+        run: npm test -- --reporter=json --outputFile=vitest-results.json
+
+      - name: Upload Vitest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-results
+          path: Tool/vitest-results.json
+          if-no-files-found: error
+
+      - name: Enforce test result
+        if: steps.tests.outcome == 'failure'
+        run: throw 'Vitest failed. See the vitest-results artifact.'
 
       - name: Build production UI
         run: npm run build
