@@ -1,4 +1,4 @@
-import { useCallback, useReducer } from 'react'
+import { useCallback, useEffect, useReducer } from 'react'
 import { studioApi } from './api/client.js'
 import { EditorPage } from './features/editor/EditorPage.jsx'
 import { DashboardPage } from './features/projects/DashboardPage.jsx'
@@ -27,6 +27,24 @@ export default function App() {
     onError,
   })
 
+  useEffect(() => {
+    if (!session.dirty) return undefined
+    const warnBeforeUnload = event => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [session.dirty])
+
+  const closeProject = useCallback(() => {
+    if (session.dirty || session.saveState === 'saving') {
+      const confirmed = window.confirm('This project still has unsaved changes. Leave the editor and discard them?')
+      if (!confirmed) return
+    }
+    dispatch({ type: 'closed' })
+  }, [session.dirty, session.saveState])
+
   if (!session.project) {
     return <DashboardPage api={studioApi} onOpen={payload => dispatch({ type: 'opened', payload })} />
   }
@@ -41,7 +59,7 @@ export default function App() {
       pokemonLoading={pokemonState.loading}
       pokemonError={pokemonState.error}
       onChange={project => dispatch({ type: 'draft-changed', project })}
-      onClose={() => dispatch({ type: 'closed' })}
+      onClose={closeProject}
     />
   )
 }
