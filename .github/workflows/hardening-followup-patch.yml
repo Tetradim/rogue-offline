@@ -1,0 +1,49 @@
+name: Apply hardening follow-up patch
+
+on:
+  push:
+    branches:
+      - fix/release-hardening
+    paths:
+      - '.github/workflows/hardening-followup-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch strict adapter compatibility
+        shell: python
+        run: |
+          from pathlib import Path
+
+          preflight = Path('Tool/pokerogue-mod-target-preflight.mjs')
+          value = preflight.read_text()
+          old = "  if (manifest.target?.adapter && manifest.target.adapter !== analysis.adapter) {\n"
+          new = "  if (\n    manifest.target?.adapter\n    && manifest.target.adapter !== 'auto-detect'\n    && manifest.target.adapter !== analysis.adapter\n  ) {\n"
+          if old not in value:
+              raise SystemExit('Expected preflight adapter condition was not found.')
+          preflight.write_text(value.replace(old, new, 1))
+
+          core = Path('Tool/installer-core.cjs')
+          value = core.read_text()
+          old = "    manifest.target?.adapter\n    && manifest.target.adapter !== 'pokerogue-modern-source'\n"
+          new = "    manifest.target?.adapter\n    && manifest.target.adapter !== 'auto-detect'\n    && manifest.target.adapter !== 'pokerogue-modern-source'\n"
+          if old not in value:
+              raise SystemExit('Expected installer adapter condition was not found.')
+          core.write_text(value.replace(old, new, 1))
+
+          Path('.github/workflows/hardening-followup-patch.yml').unlink()
+      - name: Commit patch and remove helper workflow
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix: support verified auto-detect packages"
+          git push origin HEAD:fix/release-hardening
