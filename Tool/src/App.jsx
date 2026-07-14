@@ -1,10 +1,18 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   TYPES, GROWTH_RATES, VARIANT_OPTIONS,
-  ABILITY_OPTIONS, MOVE_OPTIONS, BIOME_OPTIONS, FORM_KEY_OPTIONS, ITEM_OPTIONS,
+  ABILITY_OPTIONS, MOVE_OPTIONS, BIOME_OPTIONS, FORM_KEY_OPTIONS,
+  EVOLUTION_ITEM_OPTIONS,
   INITIAL_POKEMON_DATA, createDefaultPokemon, createDefaultForm,
   resolvedSpriteKey, variantLabel,
 } from './data.js'
+import {
+  MOVE_DESCRIPTIONS, ABILITY_DESCRIPTIONS, PASSIVE_DESCRIPTIONS, TYPE_DESCRIPTIONS,
+} from './descriptions.js'
+import { getEvolutionChain, findRootSpeciesId, buildGameExport, REAL_ID_RANGE_START, REAL_ID_RANGE_END, EGG_TIERS } from './gameExport.js'
+import { loadProject, saveProject, nextAvailableId, normalizeSpecies, validateSpecies, CUSTOM_ID_START } from './projectStore.js'
+import { HELD_ITEM_OPTIONS, HELD_ITEM_DESCRIPTIONS, EVOLUTION_ITEM_DESCRIPTIONS, NATURE_OPTIONS } from './held-items.js'
+import { downloadProjectManifest } from './projectManifest.js'
 
 // Load full 1025 Pokemon from public JSON
 const loadPokemonData = async () => {
@@ -18,17 +26,17 @@ const loadPokemonData = async () => {
 }
 
 const TABS = [
-  { id: 'basic', label: '1. Basic' },
-  { id: 'types', label: '2. Types' },
-  { id: 'abilities', label: '3. Abilities' },
-  { id: 'stats', label: '4. Stats' },
-  { id: 'evolution', label: '5. Evolution' },
-  { id: 'moves', label: '6. Moves' },
-  { id: 'forms', label: '7. Forms' },
-  { id: 'sprites', label: '8. Sprites' },
-  { id: 'passives', label: '9. Spawns' },
+  { id: 'basic', label: 'Basic' },
+  { id: 'types', label: 'Types' },
+  { id: 'abilities', label: 'Abilities' },
+  { id: 'stats', label: 'Stats' },
+  { id: 'evolution', label: 'Evolution' },
+  { id: 'moves', label: 'Moves' },
+  { id: 'forms', label: 'Forms' },
+  { id: 'sprites', label: 'Sprites' },
+  { id: 'passives', label: 'Spawns' },
+  { id: 'availability', label: 'Availability' },
 ]
-const TAB_IDS = TABS.map(t => t.id)
 
 function downloadPokemon(pokemon) {
   const constName = `${pokemon.speciesId.replace(/-/g, '_')}_SPECIES`
@@ -61,7 +69,7 @@ function PokemonNumberPicker({ isOpen, onClose, onSelect, currentNumber, pokemon
   if (!isOpen) return null
   
   const handleNumberSelect = (number) => {
-    setNewPokemonNumber(number)
+    setSelectedNumber(number)
   }
   
   const handleConfirm = () => {
@@ -118,8 +126,10 @@ export default function App() {
   const [activeLetter, setActiveLetter] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [pokemonList, setPokemonList] = useState(INITIAL_POKEMON_DATA)
   const [showNewModal, setShowNewModal] = useState(false)
   const [showNumberPicker, setShowNumberPicker] = useState(false)
+  const [numberPickerTarget, setNumberPickerTarget] = useState('existing') // 'existing' | 'new'
   const [newPokemonNumber, setNewPokemonNumber] = useState(1026)
   const [newPokemonName, setNewPokemonName] = useState('Custom Pokemon 1')
   const [selectedEvolutionIndex, setSelectedEvolutionIndex] = useState(null)
@@ -128,7 +138,7 @@ export default function App() {
   // Load full Pokemon data on mount
   useEffect(() => {
     loadPokemonData().then(data => {
-      setPokemonList(data)
+      setPokemonList(loadProject(data))
       setLoading(false)
     }).catch(error => {
       setError('Failed to load Pokemon data. Please check your connection.')
@@ -147,13 +157,13 @@ export default function App() {
 
   useEffect(() => {
     const handler = (e) => {
+      const tag = document.activeElement?.tagName
+      const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+        || document.activeElement?.isContentEditable
+      if (isEditable) return
       if (e.key.length === 1 && e.key.match(/[A-Za-z]/) && !e.ctrlKey && !e.metaKey) {
         setActiveLetter(e.key.toUpperCase())
         setSearch('')
-      }
-      if (e.key >= '1' && e.key <= '9') {
-        const idx = parseInt(e.key) - 1
-        if (idx < TAB_IDS.length) setActiveTab(TAB_IDS[idx])
       }
       if (e.key === 'Escape') {
         setActiveLetter(null)
@@ -165,16 +175,20 @@ export default function App() {
   }, [])
 
   const handleNewPokemon = () => {
-    const maxNum = Math.max(...pokemonList.map(p => p.speciesNumber), 1025)
-    setNewPokemonNumber(maxNum + 1)
-    setNewPokemonName(`Custom Pokemon ${maxNum - 1024}`)
+    const freeId = nextAvailableId(pokemonList)
+    setNewPokemonNumber(freeId)
+    setNewPokemonName(`Custom Pokemon ${freeId - 1025}`)
     setShowNewModal(true)
   }
 
   const handleCreatePokemon = () => {
-    const speciesNumber = parseInt(newPokemonNumber) || 1026
-    const created = createDefaultPokemon(speciesNumber, newPokemonName.trim() || `Custom Pokemon ${speciesNumber}`)
-    setPokemonList([...pokemonList, created])
+    const speciesNumber = parseInt(newPokemonNumber) || CUSTOM_ID_START
+    const created = normalizeSpecies({ ...createDefaultPokemon(speciesNumber, newPokemonName.trim() || `Custom Pokemon ${speciesNumber}`), source: 'custom' })
+    const errors = validateSpecies(created, pokemonList)
+    if (errors.length) { setError(errors.join(' ')); return }
+    const next = [...pokemonList, created]
+    setPokemonList(next)
+    saveProject(next)
     setSelected(created)
     setMode('edit')
     setActiveTab('basic')
@@ -183,7 +197,13 @@ export default function App() {
 
   const handleSave = () => {
     if (!selected) return
-    setPokemonList(list => list.map(p => (p.speciesNumber === selected.speciesNumber ? selected : p)))
+    const errors = selected.source === 'custom' ? validateSpecies(selected, pokemonList) : []
+    if (errors.length) { setError(errors.join(' ')); return }
+    const next = pokemonList.map(p => (p.projectId === selected.projectId ? { ...selected, revision: (selected.revision || 0) + 1 } : p))
+    setPokemonList(next)
+    saveProject(next)
+    setSelected(next.find(p => p.projectId === selected.projectId))
+    setError(null)
     setMode('view')
   }
 
@@ -197,6 +217,18 @@ export default function App() {
 
   const updateStat = (stat, value) => {
     if (selected) setSelected({ ...selected, baseStats: { ...selected.baseStats, [stat]: value } })
+  }
+
+  // For editing a *different* stage's sprite/icon key from this Pokemon's
+  // Sprites tab (pre-evolution or an evolution target) — commits directly
+  // to pokemonList since it's not part of the currently-selected Pokemon's
+  // draft edit buffer. If that other stage happens to be the currently
+  // selected/edited one, keep the draft buffer in sync too.
+  const updateOtherPokemon = (speciesId, field, value) => {
+    setPokemonList(list => { const next = list.map(p => (p.speciesId === speciesId ? { ...p, [field]: value } : p)); saveProject(next); return next })
+    if (selected?.speciesId === speciesId) {
+      setSelected(prev => ({ ...prev, [field]: value }))
+    }
   }
 
   const editable = mode === 'edit'
@@ -214,6 +246,7 @@ export default function App() {
       <header className="header">
         <h1>Pokerogue Pokemon Creator</h1>
         <div className="header-actions">
+          <button className="btn btn-secondary" onClick={() => downloadProjectManifest(pokemonList)}>Export Mod Project</button>
           <button className="btn btn-primary" onClick={handleNewPokemon}>+ New Pokemon</button>
         </div>
       </header>
@@ -253,8 +286,8 @@ export default function App() {
             ) : (
               filtered.map(p => (
                 <div
-                  key={p.speciesNumber}
-                  className={`pokemon-list-item ${selected?.speciesNumber === p.speciesNumber ? 'selected' : ''}`}
+                  key={p.projectId}
+                  className={`pokemon-list-item ${selected?.projectId === p.projectId ? 'selected' : ''}`}
                   onClick={() => { setSelected(p); setMode('view') }}
                 >
                   <div className="pokemon-icon">{p.isLegendary || p.isMythical ? '\u2605' : '\u25CF'}</div>
@@ -303,7 +336,7 @@ export default function App() {
                   <AbilitiesTab pokemon={selected} editable={editable} updateField={updateField} />
                 )}
                 {activeTab === 'stats' && (
-                  <StatsTab pokemon={selected} editable={editable} updateStat={updateStat} />
+                  <StatsTab pokemon={selected} allPokemon={pokemonList} editable={editable} updateStat={updateStat} />
                 )}
                 {activeTab === 'evolution' && (
                   <EvolutionTab
@@ -325,10 +358,14 @@ export default function App() {
                     allPokemon={pokemonList}
                     editable={editable}
                     updateField={updateField}
+                    updateOtherPokemon={updateOtherPokemon}
                   />
                 )}
                 {activeTab === 'passives' && (
                   <PassivesTab pokemon={selected} editable={editable} updateField={updateField} />
+                )}
+                {activeTab === 'availability' && (
+                  <AvailabilityTab pokemon={selected} editable={editable} updateField={updateField} />
                 )}
               </div>
 
@@ -356,7 +393,7 @@ export default function App() {
               <button className="btn btn-primary" onClick={handleNewPokemon}>+ Create New Pokemon</button>
               <div style={{ marginTop: '32px', color: '#94a3b8', fontSize: '13px', textAlign: 'center' }}>
                 <p><strong>Tips:</strong></p>
-                <p>A-Z: Jump to letter | 1-9: Switch tabs | Esc: Clear filter</p>
+                <p>A-Z: Jump to letter (when not typing in a field) | Esc: Clear filter</p>
               </div>
             </div>
           )}
@@ -371,6 +408,7 @@ export default function App() {
           setName={setNewPokemonName}
           onCreate={handleCreatePokemon}
           onCancel={() => setShowNewModal(false)}
+          onBrowseNumbers={() => { setNumberPickerTarget('new'); setShowNumberPicker(true) }}
         />
       )}
       {showNumberPicker && (
@@ -378,10 +416,14 @@ export default function App() {
           isOpen={showNumberPicker}
           onClose={() => setShowNumberPicker(false)}
           onSelect={(num) => {
-            if (selected) updateField('speciesNumber', num)
+            if (numberPickerTarget === 'new') {
+              setNewPokemonNumber(num)
+            } else if (selected) {
+              updateField('speciesNumber', num)
+            }
             setShowNumberPicker(false)
           }}
-          currentNumber={selected?.speciesNumber || 1}
+          currentNumber={numberPickerTarget === 'new' ? (parseInt(newPokemonNumber) || 1) : (selected?.speciesNumber || 1)}
           pokemonList={pokemonList}
         />
       )}
@@ -398,7 +440,8 @@ function Field({ label, children }) {
   )
 }
 
-function OptionInput({ value, options, disabled, placeholder, onChange, id }) {
+function OptionInput({ value, options, disabled, placeholder, onChange, id, descriptions }) {
+  const desc = descriptions && value ? descriptions[value] : null
   return (
     <>
       <input
@@ -408,11 +451,13 @@ function OptionInput({ value, options, disabled, placeholder, onChange, id }) {
         value={value || ''}
         disabled={disabled}
         placeholder={placeholder}
+        title={desc || undefined}
         onChange={e => onChange(e.target.value)}
       />
       <datalist id={id}>
         {options.map(option => <option key={option} value={option} />)}
       </datalist>
+      {desc && <p className="field-description">{desc}</p>}
     </>
   )
 }
@@ -454,8 +499,9 @@ function MultiDropdown({ values, options, disabled, placeholder, onChange }) {
             const active = values && values.includes(opt.value)
             return (
               <div key={opt.value} className={`multi-dropdown-item ${active ? 'active' : ''}`}
+                title={opt.description || undefined}
                 onClick={() => toggle(opt.value)}>
-                <span className="multi-dropdown-check">{active ? '\u2713' : ''}</span>
+                <span className="multi-dropdown-check">{active ? '✓' : ''}</span>
                 {opt.label}
               </div>
             )
@@ -466,9 +512,14 @@ function MultiDropdown({ values, options, disabled, placeholder, onChange }) {
   )
 }
 
-function MultiOptionInput({ values, options, disabled, placeholder, onChange, id }) {
+function MultiOptionInput({ values, options, disabled, addDisabled, placeholder, onChange, id, descriptions }) {
   const [draft, setDraft] = useState('')
   const selectedValues = values || []
+  // addDisabled gates only the "add new" row (e.g. a cap being reached).
+  // Removing an already-selected value should still work whenever the form
+  // itself is editable — being capped shouldn't also lock you out of
+  // removing something to make room for a different pick.
+  const addRowDisabled = disabled || addDisabled
 
   const addValue = (value) => {
     const normalized = value.trim().toUpperCase().replace(/\s+/g, '_')
@@ -484,17 +535,18 @@ function MultiOptionInput({ values, options, disabled, placeholder, onChange, id
           id={id}
           value={draft}
           options={options}
-          disabled={disabled}
+          disabled={addRowDisabled}
           placeholder={placeholder}
+          descriptions={descriptions}
           onChange={setDraft}
         />
-        <button className="btn btn-secondary" disabled={disabled || !draft.trim()} onClick={() => addValue(draft)}>
+        <button className="btn btn-secondary" disabled={addRowDisabled || !draft.trim()} onClick={() => addValue(draft)}>
           Add
         </button>
       </div>
       <div className="pill-list">
         {selectedValues.map(value => (
-          <span className="pill" key={value}>
+          <span className="pill" key={value} title={descriptions?.[value] || undefined}>
             {value}
             {!disabled && (
               <button onClick={() => onChange(selectedValues.filter(v => v !== value))} aria-label={`Remove ${value}`}>
@@ -509,10 +561,17 @@ function MultiOptionInput({ values, options, disabled, placeholder, onChange, id
 }
 
 function NewPokemonModal({
-  pokemonList, speciesNumber, name, setSpeciesNumber, setName, onCreate, onCancel,
+  pokemonList, speciesNumber, name, setSpeciesNumber, setName, onCreate, onCancel, onBrowseNumbers,
 }) {
   const number = parseInt(speciesNumber) || 0
   const existing = pokemonList.find(p => p.speciesNumber === number)
+  const [confirmedOverride, setConfirmedOverride] = useState(false)
+
+  // Reset the override confirmation whenever the number changes, so it can
+  // never silently carry over to a different (also colliding) number.
+  useEffect(() => { setConfirmedOverride(false) }, [number])
+
+  const blocked = number < CUSTOM_ID_START || !!existing
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="new-pokemon-title">
@@ -520,8 +579,12 @@ function NewPokemonModal({
         <h2 id="new-pokemon-title">New Pokemon</h2>
         <div className="form-grid">
           <Field label="Species Number">
-            <input className="form-input" type="number" min={1} value={speciesNumber}
-              onChange={e => setSpeciesNumber(e.target.value)} />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input className="form-input" type="number" min={CUSTOM_ID_START} value={speciesNumber}
+                onChange={e => setSpeciesNumber(e.target.value)} />
+              <button type="button" className="icon-button" title="Browse taken/free numbers"
+                onClick={onBrowseNumbers}>🔍</button>
+            </div>
           </Field>
           <Field label="Name">
             <input className="form-input" type="text" value={name}
@@ -529,11 +592,20 @@ function NewPokemonModal({
           </Field>
         </div>
         {existing && (
-          <p className="modal-warning">#{number} is already used by {existing.name}. Creating anyway will duplicate that number.</p>
+          <>
+            <p className="modal-warning">
+              #{number} is already used by {existing.name}. Two Pokemon sharing a number isn't just a
+              display quirk here — if both ever get exported to your real game, whichever one builds
+              last silently overwrites the other under that same ID, and anything that already evolves
+              into or out of #{number} would evolve into the wrong Pokemon without any error. This is
+              blocked permanently. Choose a different slot.
+            </p>
+
+          </>
         )}
         <div className="modal-actions">
           <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>
-          <button className="btn btn-primary" onClick={onCreate}>Create</button>
+          <button className="btn btn-primary" onClick={onCreate} disabled={blocked}>Create</button>
         </div>
       </div>
     </div>
@@ -555,9 +627,9 @@ function BasicTab({ pokemon, editable, updateField, onShowNumberPicker, pokemonL
         </Field>
         <Field label="Species Number">
           <div style={{display: 'flex', gap: '8px'}}>
-            <input className="form-input" type="number" value={pokemon.speciesNumber} disabled={!editable}
+            <input className="form-input" type="number" min={CUSTOM_ID_START} value={pokemon.speciesNumber} disabled={!editable || pokemon.source === 'legacy'}
               onChange={e => updateField('speciesNumber', parseInt(e.target.value) || 0)} style={{flex: 1}} />
-            {editable && (
+            {editable && pokemon.source !== 'legacy' && (
               <button onClick={() => onShowNumberPicker(pokemonList)} className="icon-button" title="Browse all Pokemon">🔍</button>
             )}
           </div>
@@ -607,6 +679,11 @@ function BasicTab({ pokemon, editable, updateField, onShowNumberPicker, pokemonL
               onChange={e => updateField('isMythical', e.target.checked)} />
             <label htmlFor="isMythical">Mythical</label>
           </div>
+          <div className="checkbox-group">
+            <input type="checkbox" id="isStarter" checked={!!pokemon.isStarter} disabled={!editable}
+              onChange={e => updateField('isStarter', e.target.checked)} />
+            <label htmlFor="isStarter">Starter Pokemon (selectable in New Game)</label>
+          </div>
         </div>
       </div>
     </div>
@@ -623,6 +700,9 @@ function TypesTab({ pokemon, editable, updateField }) {
             onChange={e => updateField('primaryType', e.target.value)}>
             {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
+          {TYPE_DESCRIPTIONS[pokemon.primaryType] && (
+            <p className="field-description">{TYPE_DESCRIPTIONS[pokemon.primaryType]}</p>
+          )}
         </Field>
         <Field label="Secondary Type">
           <select className="form-select" value={pokemon.secondaryType || ''} disabled={!editable}
@@ -630,6 +710,9 @@ function TypesTab({ pokemon, editable, updateField }) {
             <option value="">None</option>
             {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
+          {pokemon.secondaryType && TYPE_DESCRIPTIONS[pokemon.secondaryType] && (
+            <p className="field-description">{TYPE_DESCRIPTIONS[pokemon.secondaryType]}</p>
+          )}
         </Field>
       </div>
     </div>
@@ -643,20 +726,22 @@ function AbilitiesTab({ pokemon, editable, updateField }) {
       <div className="form-grid">
         <Field label="Ability 1">
           <OptionInput id="ability-1-options" value={pokemon.ability1} options={ABILITY_OPTIONS} disabled={!editable}
-            placeholder="OVERGROW"
+            placeholder="OVERGROW" descriptions={ABILITY_DESCRIPTIONS}
             onChange={value => updateField('ability1', value.toUpperCase().replace(/\s+/g, '_'))} />
         </Field>
         <Field label="Ability 2">
           <OptionInput id="ability-2-options" value={pokemon.ability2 || ''} options={ABILITY_OPTIONS} disabled={!editable}
-            placeholder="CHLOROPHYLL"
+            placeholder="CHLOROPHYLL" descriptions={ABILITY_DESCRIPTIONS}
             onChange={value => updateField('ability2', value.toUpperCase().replace(/\s+/g, '_') || null)} />
         </Field>
         <Field label="Hidden Ability">
           <OptionInput id="hidden-ability-options" value={pokemon.hiddenAbility || ''} options={ABILITY_OPTIONS} disabled={!editable}
+            descriptions={ABILITY_DESCRIPTIONS}
             onChange={value => updateField('hiddenAbility', value.toUpperCase().replace(/\s+/g, '_') || null)} />
         </Field>
         <Field label="Passive Ability">
           <OptionInput id="passive-ability-options" value={pokemon.passiveAbility || ''} options={ABILITY_OPTIONS} disabled={!editable}
+            descriptions={ABILITY_DESCRIPTIONS}
             onChange={value => updateField('passiveAbility', value.toUpperCase().replace(/\s+/g, '_') || null)} />
         </Field>
       </div>
@@ -664,7 +749,7 @@ function AbilitiesTab({ pokemon, editable, updateField }) {
   )
 }
 
-function StatsTab({ pokemon, editable, updateStat }) {
+function StatsTab({ pokemon, allPokemon, editable, updateStat }) {
   const total = Object.values(pokemon.baseStats).reduce((a, b) => a + b, 0)
   return (
     <div className="form-section">
@@ -679,6 +764,200 @@ function StatsTab({ pokemon, editable, updateStat }) {
           </div>
         ))}
       </div>
+      <GameExportPanel pokemon={pokemon} allPokemon={allPokemon} />
+    </div>
+  )
+}
+
+function GameExportPanel({ pokemon, allPokemon }) {
+  const rootSpeciesId = findRootSpeciesId(pokemon.speciesId, allPokemon)
+  const rootPokemon = allPokemon.find(p => p.speciesId === rootSpeciesId) || pokemon
+  const chain = getEvolutionChain(rootSpeciesId, allPokemon)
+
+  const [startId, setStartId] = useState(1040)
+  const [lineName, setLineName] = useState(rootPokemon.name || '')
+  const [starterCost, setStarterCost] = useState(1)
+  const [eggTier, setEggTier] = useState('')
+  const [nature, setNature] = useState('')
+  const [heldItems, setHeldItems] = useState([])
+  const [result, setResult] = useState(null)
+
+  const chainSpeciesIds = new Set(chain.map(s => s.speciesId))
+  const proposedIds = chain.map((_, i) => (parseInt(startId) || 0) + i)
+  const livePreviewCollisions = allPokemon.filter(p =>
+    !chainSpeciesIds.has(p.speciesId) && proposedIds.includes(p.speciesNumber)
+  )
+
+  const addHeldItem = () => setHeldItems([...heldItems, { name: '', count: 1 }])
+  const updateHeldItem = (i, patch) => {
+    const next = [...heldItems]
+    next[i] = { ...next[i], ...patch }
+    setHeldItems(next)
+  }
+  const removeHeldItem = (i) => setHeldItems(heldItems.filter((_, idx) => idx !== i))
+
+  const handleGenerate = () => {
+    const output = buildGameExport({
+      chain, allPokemon, startId: parseInt(startId) || 0, lineName,
+      starterCost: parseInt(starterCost) || 1,
+      eggTier: eggTier || null,
+      nature: nature ? nature.toUpperCase().replace(/\s+/g, '_') : null,
+      heldItems: heldItems.filter(h => h.name.trim()).map(h => ({
+        name: h.name.trim().toUpperCase().replace(/\s+/g, '_'),
+        count: parseInt(h.count) || 1,
+      })),
+    })
+    setResult(output)
+  }
+
+  const handleDownload = () => {
+    if (!result || result.error) return
+    const parts = [
+      '// ============ 1. src/enums/species-id.ts ============',
+      result.enumBlock,
+      '// ============ 2. generation-XX.ts ============',
+      result.generationBlock,
+      '// ============ 3. src/data/balance/moves/egg-moves.ts ============',
+      result.eggMovesBlock,
+      '// ============ 4. Asset checklist ============',
+      result.assetChecklist,
+    ]
+    if (result.starterPatchBlock) {
+      parts.push('// ============ 5. src/phases/select-starter-phase.ts ============', result.starterPatchBlock)
+    }
+    parts.push(
+      '// ============ Manual steps NOT covered by this patch ============',
+      result.manualSteps.map(s => `// - ${s}`).join('\n'),
+    )
+    const blob = new Blob([parts.join('\n\n')], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${lineName.toLowerCase().replace(/\s+/g, '_') || 'custom_line'}_game_patch.ts.txt`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const handleDownloadManifest = () => {
+    if (!result || result.error) return
+    const blob = new Blob([JSON.stringify(result.manifest, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${lineName.toLowerCase().replace(/\s+/g, '_') || 'custom_line'}_manifest.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div className="form-section" style={{ marginTop: '24px' }}>
+      <h3 className="form-section-title">Export Game Patch</h3>
+      <p style={{ color: '#94a3b8', marginBottom: '16px' }}>
+        <strong>What this does:</strong> takes a full custom evolution line you've built here in the
+        Tool and gets it into your actual local game project — new numeric species IDs, a registry
+        block with your stats/types/abilities/moves in the real field names, matching egg-move
+        entries, donor sprite/icon/cry assets copied under the new IDs, and (if set below) a patch
+        for the game's starter-select code. Works from any stage of a line, not just the first one:
+        {' '}{chain.map(s => s.name).join(' → ')}.
+      </p>
+      <p style={{ color: '#94a3b8', marginBottom: '16px' }}>
+        <strong>Two ways to get it into your project:</strong> download the Manifest (.json) and run
+        the included <code>apply-game-patch.cjs</code> script from your terminal — it actually edits
+        the real files and copies the real assets for you, so you're not doing the work twice. Or
+        download the Patch (.txt) to review/copy by hand if you'd rather do it yourself. Either way,
+        you still need to rebuild your project afterward — this Tool has no live connection to a
+        running game.
+      </p>
+      <div className="form-grid" style={{ marginBottom: '16px' }}>
+        <Field label="Line Name">
+          <input className="form-input" type="text" value={lineName} onChange={e => setLineName(e.target.value)} />
+        </Field>
+        <Field label={`Start ID (safe range: ${REAL_ID_RANGE_START}-${REAL_ID_RANGE_END})`}>
+          <input className="form-input" type="number" value={startId}
+            onChange={e => setStartId(e.target.value)} />
+          {livePreviewCollisions.length > 0 && (
+            <p className="field-description" style={{ color: 'var(--danger)' }}>
+              ⚠ Collides with: {livePreviewCollisions.map(p => `#${p.speciesNumber} ${p.name}`).join(', ')}
+              {' '}— pick a different Start ID.
+            </p>
+          )}
+        </Field>
+        <Field label="Starter Cost">
+          <input className="form-input" type="number" min={1} value={starterCost}
+            onChange={e => setStarterCost(e.target.value)} />
+        </Field>
+        <Field label="Egg Tier (optional — real field is optional)">
+          <select className="form-select" value={eggTier} onChange={e => setEggTier(e.target.value)}>
+            <option value="">(omit — leave unset)</option>
+            {EGG_TIERS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </Field>
+        <Field label="Fixed Nature (optional)">
+          <select className="form-select" value={nature} onChange={e => setNature(e.target.value)}>
+            <option value="">(omit — player chooses at starter select, as normal)</option>
+            {NATURE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <div style={{ marginBottom: '16px' }}>
+        <label className="form-label">Starting Held Items (optional)</label>
+        <p className="field-description" style={{ marginBottom: '8px' }}>
+          Real held-item keys, extracted directly from this project's own modifier registry (111
+          confirmed). Descriptions are shown where available — common items have well-known,
+          stable effects; PokeRogue-specific items (Mystery Encounter items, some boosters) are
+          left undescribed rather than guessed.
+        </p>
+        <div className="evolution-list">
+          {heldItems.map((item, i) => (
+            <div className="evolution-item" key={i}>
+              <OptionInput id={`held-item-options-${i}`} value={item.name} options={HELD_ITEM_OPTIONS}
+                placeholder="LEFTOVERS" descriptions={HELD_ITEM_DESCRIPTIONS}
+                onChange={value => updateHeldItem(i, { name: value })} />
+              <input className="form-input" type="number" min={CUSTOM_ID_START} style={{ width: '90px' }}
+                placeholder="Count" value={item.count}
+                onChange={e => updateHeldItem(i, { count: e.target.value })} />
+              <button className="btn btn-danger" onClick={() => removeHeldItem(i)}>Remove</button>
+            </div>
+          ))}
+          <button className="btn btn-secondary" onClick={addHeldItem}>+ Add Held Item</button>
+        </div>
+      </div>
+
+      <button className="btn btn-primary" onClick={handleGenerate}>Generate Patch</button>
+
+      {result?.error && (
+        <p style={{ color: 'var(--danger)', marginTop: '12px' }}>{result.error}</p>
+      )}
+
+      {result && !result.error && (
+        <div style={{ marginTop: '16px' }}>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <button className="btn btn-success" onClick={handleDownloadManifest}>
+              Download Manifest (.json) — for apply-game-patch.cjs
+            </button>
+            <button className="btn btn-secondary" onClick={handleDownload}>Download Patch (.txt) — to review/copy by hand</button>
+          </div>
+          <p className="field-description" style={{ marginTop: '10px' }}>
+            <strong>To actually apply it:</strong> from your local <code>pokerogue-beta</code> project
+            folder, run <code>node apply-game-patch.cjs --manifest {(lineName || 'custom_line').toLowerCase().replace(/\s+/g, '_')}_manifest.json --project /path/to/pokerogue-beta --dry-run</code> first
+            to check everything, then re-run without <code>--dry-run</code> to actually write the
+            files and copy the assets. The script is included alongside this Tool.
+          </p>
+          <div style={{ marginTop: '12px' }}>
+            <p style={{ color: '#94a3b8', fontSize: '13px' }}>
+              Stage IDs: {result.stageEnumNames.map((n, i) => `${n}=${result.stageIds[i]}`).join(', ')}
+            </p>
+            {result.manualSteps.map((step, i) => (
+              <p key={i} style={{ color: '#f0b429', fontSize: '13px' }}>⚠ {step}</p>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -724,7 +1003,7 @@ function EvolutionTab({ pokemon, allPokemon, editable, updateField }) {
               value={evo.level || ''} disabled={!editable}
               onChange={e => updateEvolution(i, { level: parseInt(e.target.value) || undefined })} />
             <OptionInput id={`evolution-item-options-${i}`} value={evo.item || ''} options={EVOLUTION_ITEM_OPTIONS}
-              disabled={!editable} placeholder="Item"
+              disabled={!editable} placeholder="Item" descriptions={EVOLUTION_ITEM_DESCRIPTIONS}
               onChange={value => updateEvolution(i, { item: value.toUpperCase().replace(/\s+/g, '_') || undefined })} />
             <OptionInput id={`evolution-form-options-${i}`} value={evo.formKey || ''} options={FORM_KEY_OPTIONS}
               disabled={!editable} placeholder="Form Key"
@@ -745,21 +1024,31 @@ function EvolutionTab({ pokemon, allPokemon, editable, updateField }) {
           </button>
         )}
       </div>
+
+      <p style={{ color: '#94a3b8', fontSize: '13px', marginTop: '16px' }}>
+        Looking for Export Game Patch? It's on the Stats tab now — it works from any stage of
+        this line, not just the first one.
+      </p>
     </div>
   )
 }
 
 function MovesTab({ pokemon, editable, updateField }) {
-  const levelUpRows = Object.entries(pokemon.levelUpMoves || {})
-    .map(([level, move]) => ({ level: parseInt(level), move }))
-    .sort((a, b) => a.level - b.level)
+  // levelUpMoves used to be stored as {level: move} — a plain object, which
+  // silently collapses to one entry whenever two moves share a level
+  // (object keys must be unique). That's the bug behind "can't pick two
+  // moves at the same level." Switched to an array of {level, move} so
+  // duplicates are allowed. (Checked: every entry in pokemon_data.json has
+  // levelUpMoves as an empty {}, so there's no real data to migrate.)
+  const levelUpRows = Array.isArray(pokemon.levelUpMoves) ? pokemon.levelUpMoves : []
+  const eggMoves = pokemon.eggMoves || []
+  const EGG_MOVE_CAP = 4 // confirmed exact count in the real game's egg-moves.ts
 
-  const updateLevelUpRows = (rows) => {
-    const map = {}
-    rows.forEach(row => {
-      if (row.level && row.move) map[row.level] = row.move.trim().toUpperCase().replace(/\s+/g, '_')
-    })
-    updateField('levelUpMoves', map)
+  const updateLevelUpRows = (rows) => updateField('levelUpMoves', rows)
+
+  const addAllTMs = () => {
+    const combined = Array.from(new Set([...(pokemon.tmPool || []), ...MOVE_OPTIONS]))
+    updateField('tmPool', combined)
   }
 
   return (
@@ -768,17 +1057,20 @@ function MovesTab({ pokemon, editable, updateField }) {
       <div className="form-grid">
         <div className="form-group full-width">
           <label className="form-label">Level-Up Moves</label>
+          <p style={{ color: '#94a3b8', fontSize: '12px', margin: '0 0 8px' }}>
+            Multiple moves can share the same level — just add another row with the same number.
+          </p>
           <div className="move-list">
             {levelUpRows.map((row, i) => (
-              <div className="move-row" key={`${row.level}-${row.move}-${i}`}>
-                <input className="form-input" type="number" min={1} value={row.level} disabled={!editable}
+              <div className="move-row" key={i}>
+                <input className="form-input" type="number" min={CUSTOM_ID_START} value={row.level} disabled={!editable}
                   onChange={e => {
                     const next = [...levelUpRows]
                     next[i] = { ...row, level: parseInt(e.target.value) || 1 }
                     updateLevelUpRows(next)
                   }} />
                 <OptionInput id={`level-move-options-${i}`} value={row.move} options={MOVE_OPTIONS} disabled={!editable}
-                  placeholder="TACKLE"
+                  placeholder="TACKLE" descriptions={MOVE_DESCRIPTIONS}
                   onChange={value => {
                     const next = [...levelUpRows]
                     next[i] = { ...row, move: value.toUpperCase().replace(/\s+/g, '_') }
@@ -792,7 +1084,7 @@ function MovesTab({ pokemon, editable, updateField }) {
               </div>
             ))}
             {editable && (
-              <button className="btn btn-secondary" onClick={() => updateLevelUpRows([...levelUpRows, { level: 1, move: 'TACKLE' }])}>
+              <button className="btn btn-secondary" onClick={() => updateLevelUpRows([...levelUpRows, { level: 1, move: '' }])}>
                 + Add Move
               </button>
             )}
@@ -802,16 +1094,29 @@ function MovesTab({ pokemon, editable, updateField }) {
           </div>
         </div>
         <div className="form-group full-width">
-          <label className="form-label">TM Pool</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
+            <label className="form-label" style={{ margin: 0 }}>TM Pool</label>
+            {editable && (
+              <button className="btn btn-secondary" style={{ padding: '2px 10px', fontSize: '12px' }} onClick={addAllTMs}>
+                + All TMs
+              </button>
+            )}
+          </div>
           <MultiOptionInput id="tm-pool-options" values={pokemon.tmPool || []} options={MOVE_OPTIONS} disabled={!editable}
-            placeholder="THUNDERBOLT"
+            placeholder="THUNDERBOLT" descriptions={MOVE_DESCRIPTIONS}
             onChange={values => updateField('tmPool', values)} />
         </div>
         <div className="form-group full-width">
-          <label className="form-label">Egg Moves</label>
-          <MultiOptionInput id="egg-move-options" values={pokemon.eggMoves || []} options={MOVE_OPTIONS} disabled={!editable}
-            placeholder="ANCIENT_POWER"
-            onChange={values => updateField('eggMoves', values)} />
+          <label className="form-label">
+            Egg Moves ({eggMoves.length}/{EGG_MOVE_CAP})
+          </label>
+          <MultiOptionInput id="egg-move-options" values={eggMoves}
+            options={eggMoves.length >= EGG_MOVE_CAP ? [] : MOVE_OPTIONS}
+            disabled={!editable}
+            addDisabled={eggMoves.length >= EGG_MOVE_CAP}
+            placeholder={eggMoves.length >= EGG_MOVE_CAP ? `Limit of ${EGG_MOVE_CAP} reached` : 'ANCIENT_POWER'}
+            descriptions={MOVE_DESCRIPTIONS}
+            onChange={values => updateField('eggMoves', values.slice(0, EGG_MOVE_CAP))} />
         </div>
       </div>
     </div>
@@ -844,7 +1149,9 @@ function FormsTab({ pokemon, editable, updateField }) {
       </p>
 
       <div className="evolution-list">
-        {forms.map((form, i) => (
+        {forms.map((form, i) => {
+          const suggestedKey = `${pokemon.speciesNumber}${form.formKey ? `-${form.formKey}` : ''}`
+          return (
           <div key={i} className="form-section" style={{ padding: '16px', marginBottom: 0 }}>
             <div className="form-grid">
               <Field label="Form Key">
@@ -857,13 +1164,51 @@ function FormsTab({ pokemon, editable, updateField }) {
                   placeholder="Alolan Form"
                   onChange={e => updateForm(i, { formName: e.target.value })} />
               </Field>
-              <Field label="Sprite Key">
-                <input className="form-input" type="text" value={form.spriteKey} disabled={!editable}
-                  onChange={e => updateForm(i, { spriteKey: e.target.value })} />
+              <Field label="Sprite Key (Tool bookkeeping only — see note below)">
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input className="form-input" type="text" value={form.spriteKey} disabled={!editable}
+                    placeholder={suggestedKey}
+                    onChange={e => updateForm(i, { spriteKey: e.target.value })} />
+                  {editable && (
+                    <button type="button" className="btn btn-secondary" style={{ whiteSpace: 'nowrap' }}
+                      onClick={() => updateForm(i, { spriteKey: suggestedKey })}>
+                      Use "{suggestedKey}"
+                    </button>
+                  )}
+                </div>
+                <p className="field-description">
+                  <strong>Correction from an earlier version of this Tool:</strong> there is no
+                  "Sprite Key" field anywhere in the real game's data at all — confirmed directly
+                  in the actual source. The sprite file the game loads is always computed
+                  automatically at runtime as <code>{'{numeric SpeciesId}'}{'{-formKey if not the default form}'}</code>,
+                  e.g. Charizard is species #6, so its Mega X form loads <code>6-mega-x.png</code> —
+                  not a name-based file like <code>charizard-mega-x.png</code>. You can't override
+                  this by typing a different value anywhere in the real game; this field only exists
+                  so this Tool's own "Export Game Patch" feature knows which existing species' art
+                  to physically copy for this stage. The real trick your project already uses (see
+                  Tetradim/Tetrajin) is copying an existing Pok\u00e9mon's actual image/atlas files to a
+                  new filename matching your custom species' own number — not pointing at another
+                  species by name.
+                </p>
               </Field>
-              <Field label="Icon Key">
-                <input className="form-input" type="text" value={form.iconKey} disabled={!editable}
-                  onChange={e => updateForm(i, { iconKey: e.target.value })} />
+              <Field label="Icon Key (Tool bookkeeping only — see note below)">
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input className="form-input" type="text" value={form.iconKey} disabled={!editable}
+                    placeholder={String(pokemon.speciesNumber)}
+                    onChange={e => updateForm(i, { iconKey: e.target.value })} />
+                  {editable && (
+                    <button type="button" className="btn btn-secondary" style={{ whiteSpace: 'nowrap' }}
+                      onClick={() => updateForm(i, { iconKey: String(pokemon.speciesNumber) })}>
+                      Use "{pokemon.speciesNumber}"
+                    </button>
+                  )}
+                </div>
+                <p className="field-description">
+                  Same correction as Sprite Key above — not a real settable field either. Icons
+                  are frames inside one shared spritesheet per generation
+                  (<code>pokemon_icons_0.png</code> ... <code>pokemon_icons_9.png</code>), keyed by
+                  numeric ID, not a standalone file you can point elsewhere.
+                </p>
               </Field>
               <Field label="Primary Type Override">
                 <select className="form-select" value={form.primaryType || ''} disabled={!editable}
@@ -898,7 +1243,8 @@ function FormsTab({ pokemon, editable, updateField }) {
               </div>
             )}
           </div>
-        ))}
+          )
+        })}
         {editable && (
           <button className="btn btn-secondary"
             onClick={() => updateField('forms', [...forms, createDefaultForm()])}>
@@ -914,76 +1260,115 @@ function FormsTab({ pokemon, editable, updateField }) {
 }
 
 // --- Sprites tab: now shows the evolution-line variant preview ------------
-function SpritesTab({ pokemon, allPokemon, editable, updateField }) {
+function SpritesTab({ pokemon, allPokemon, editable, updateField, updateOtherPokemon }) {
   const preEvo = pokemon.preEvolution
     ? allPokemon.find(p => p.speciesId === pokemon.preEvolution)
     : null
 
   const evolutions = pokemon.evolutions || []
+  const spriteKeyOptions = allPokemon.map(p => p.spriteKey).filter(Boolean)
+  const iconKeyOptions = allPokemon.map(p => p.iconKey || p.spriteKey).filter(Boolean)
 
   return (
     <div className="form-section">
       <h3 className="form-section-title">Sprites</h3>
       <div className="form-grid">
         <Field label="Sprite Key">
-          <select className="form-select" value={pokemon.spriteKey || ''} disabled={!editable}
-            onChange={e => updateField('spriteKey', e.target.value)}>
-            <option value="">-- Select --</option>
-            {allPokemon.map(p => (
-              <option key={p.speciesId} value={p.spriteKey}>
-                {p.name} ({p.spriteKey})
-              </option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <OptionInput id="sprite-key-options" value={pokemon.spriteKey || ''} options={spriteKeyOptions}
+              disabled={!editable} placeholder={pokemon.speciesId}
+              onChange={value => updateField('spriteKey', value)} />
+            {editable && pokemon.spriteKey !== pokemon.speciesId && (
+              <button type="button" className="btn btn-secondary" style={{ whiteSpace: 'nowrap' }}
+                onClick={() => updateField('spriteKey', pokemon.speciesId)}>
+                Reset to "{pokemon.speciesId}"
+              </button>
+            )}
+          </div>
         </Field>
         <Field label="Icon Key">
-          <select className="form-select" value={pokemon.iconKey || ''} disabled={!editable}
-            onChange={e => updateField('iconKey', e.target.value)}>
-            <option value="">-- Select --</option>
-            {allPokemon.map(p => (
-              <option key={p.speciesId} value={p.iconKey || p.spriteKey}>
-                {p.name} ({p.iconKey || p.spriteKey})
-              </option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <OptionInput id="icon-key-options" value={pokemon.iconKey || ''} options={iconKeyOptions}
+              disabled={!editable} placeholder={pokemon.speciesId}
+              onChange={value => updateField('iconKey', value)} />
+            {editable && pokemon.iconKey !== pokemon.speciesId && (
+              <button type="button" className="btn btn-secondary" style={{ whiteSpace: 'nowrap' }}
+                onClick={() => updateField('iconKey', pokemon.speciesId)}>
+                Reset to "{pokemon.speciesId}"
+              </button>
+            )}
+          </div>
         </Field>
       </div>
 
-      <h3 className="form-section-title" style={{ marginTop: '24px' }}>Variant Sprites (Evolution Line)</h3>
+      <h3 className="form-section-title" style={{ marginTop: '24px' }}>Sprites Per Evolution Stage</h3>
       <p style={{ color: '#94a3b8', marginBottom: '16px' }}>
-        Variants are chosen per stage on the Evolution tab. This is a read-only
-        preview of the resolved sprite key for each stage of this line.
+        Each stage of this line is its own Pokemon entry with its own Sprite Key, so you can assign a
+        different sprite per stage right here without switching to that stage's own page. Shiny/form
+        display is still set per stage on the Evolution tab. Type to search, or use Reset to put it
+        back to that Pokemon's own default.
       </p>
 
       <div className="evolution-list">
         {preEvo && (
-          <div className="evolution-item">
+          <div className="evolution-item" style={{ flexWrap: 'wrap' }}>
             <span style={{ width: '90px', color: '#94a3b8', fontSize: '12px' }}>PRE-EVO</span>
-            <span style={{ flex: 1 }}>{preEvo.name}</span>
+            <span style={{ flex: 1, minWidth: '120px' }}>{preEvo.name}</span>
+            <div style={{ display: 'flex', gap: '8px', width: '340px' }}>
+              <OptionInput id="pre-evo-sprite-key-options" value={preEvo.spriteKey || ''} options={spriteKeyOptions}
+                disabled={!editable}
+                onChange={value => updateOtherPokemon(preEvo.speciesId, 'spriteKey', value)} />
+              {editable && preEvo.spriteKey !== preEvo.speciesId && (
+                <button type="button" className="btn btn-secondary" style={{ whiteSpace: 'nowrap' }}
+                  onClick={() => updateOtherPokemon(preEvo.speciesId, 'spriteKey', preEvo.speciesId)}>
+                  Reset
+                </button>
+              )}
+            </div>
             <span style={{ color: '#94a3b8' }}>{variantLabel(preEvo.variant)}</span>
-            <code>{resolvedSpriteKey(preEvo.spriteKey, preEvo.variant)}</code>
           </div>
         )}
 
         <div className="evolution-item">
           <span style={{ width: '90px', color: 'var(--secondary)', fontSize: '12px' }}>THIS MON</span>
           <span style={{ flex: 1 }}>{pokemon.name}</span>
-          <span style={{ color: '#94a3b8' }}>{variantLabel(pokemon.variant)}</span>
+          <span style={{ color: '#94a3b8', fontSize: '12px' }}>(edit using the Sprite Key field above)</span>
           <code>{resolvedSpriteKey(pokemon.spriteKey, pokemon.variant)}</code>
         </div>
 
         {evolutions.map((evo, i) => {
           const evoSpecies = allPokemon.find(p => p.speciesId === evo.speciesId)
-          const baseSpriteKey = evoSpecies ? evoSpecies.spriteKey : evo.speciesId
+          if (!evoSpecies) {
+            return (
+              <div className="evolution-item" key={i}>
+                <span style={{ width: '90px', color: '#94a3b8', fontSize: '12px' }}>
+                  LV {evo.level || '—'}{evo.item ? ` / ${evo.item}` : ''}
+                </span>
+                <span style={{ flex: 1, color: '#94a3b8' }}>
+                  {evo.speciesId || '(unset)'} {'—'} not found in the roster, can't assign a sprite yet
+                </span>
+              </div>
+            )
+          }
           return (
-            <div className="evolution-item" key={i}>
+            <div className="evolution-item" key={i} style={{ flexWrap: 'wrap' }}>
               <span style={{ width: '90px', color: '#94a3b8', fontSize: '12px' }}>
-                LV {evo.level || '\u2014'}{evo.item ? ` / ${evo.item}` : ''}
+                LV {evo.level || '—'}{evo.item ? ` / ${evo.item}` : ''}
               </span>
-              <span style={{ flex: 1 }}>{evoSpecies ? evoSpecies.name : (evo.speciesId || '(unset)')}</span>
+              <span style={{ flex: 1, minWidth: '120px' }}>{evoSpecies.name}</span>
+              <div style={{ display: 'flex', gap: '8px', width: '340px' }}>
+                <OptionInput id={`evo-sprite-key-options-${i}`} value={evoSpecies.spriteKey || ''} options={spriteKeyOptions}
+                  disabled={!editable}
+                  onChange={value => updateOtherPokemon(evoSpecies.speciesId, 'spriteKey', value)} />
+                {editable && evoSpecies.spriteKey !== evoSpecies.speciesId && (
+                  <button type="button" className="btn btn-secondary" style={{ whiteSpace: 'nowrap' }}
+                    onClick={() => updateOtherPokemon(evoSpecies.speciesId, 'spriteKey', evoSpecies.speciesId)}>
+                    Reset
+                  </button>
+                )}
+              </div>
               <span style={{ color: '#94a3b8' }}>{evo.formKey || 'base'}</span>
               <span style={{ color: '#94a3b8' }}>{variantLabel(evo.variant)}</span>
-              <code>{resolvedSpriteKey(baseSpriteKey, evo.variant)}</code>
             </div>
           )
         })}
@@ -1003,7 +1388,8 @@ function PassivesTab({ pokemon, editable, updateField }) {
             values={pokemon.passives || []}
             options={ABILITY_OPTIONS.map(ability => ({
               value: ability,
-              label: ability.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase())
+              label: ability.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase()),
+              description: PASSIVE_DESCRIPTIONS[ability] || ABILITY_DESCRIPTIONS[ability],
             }))}
             disabled={!editable}
             placeholder="Overgrow"
@@ -1024,6 +1410,42 @@ function PassivesTab({ pokemon, editable, updateField }) {
           <input className="form-input" type="number" value={pokemon.spawnLevels.max} disabled={!editable}
             onChange={e => updateField('spawnLevels', { ...pokemon.spawnLevels, max: parseInt(e.target.value) || 100 })} />
         </Field>
+      </div>
+    </div>
+  )
+}
+
+
+function AvailabilityTab({ pokemon, editable, updateField }) {
+  const availability = pokemon.availability || {}
+  const labels = {
+    wildEncounters: 'Wild encounters',
+    starters: 'Starter selection',
+    eggs: 'Egg pools',
+    trainers: 'Trainer teams',
+    bosses: 'Boss encounters',
+    specialRewards: 'Special rewards and mystery encounters',
+  }
+  const setAvailability = (key, value) => updateField('availability', { ...availability, [key]: value })
+  const setAll = value => updateField('availability', Object.fromEntries(Object.keys(labels).map(key => [key, value])))
+  return (
+    <div className="form-section">
+      <h3 className="form-section-title">Acquisition &amp; Encounter Availability</h3>
+      <p className="field-description">
+        Disabling a legacy species preserves its registry entry and existing saves. The injector will remove it only from the selected acquisition pools.
+      </p>
+      <div style={{ display: 'flex', gap: '8px', margin: '16px 0' }}>
+        <button className="btn btn-secondary" disabled={!editable} onClick={() => setAll(false)}>Disable all acquisition</button>
+        <button className="btn btn-secondary" disabled={!editable} onClick={() => setAll(true)}>Enable all acquisition</button>
+      </div>
+      <div className="form-grid">
+        {Object.entries(labels).map(([key, label]) => (
+          <div className="checkbox-group" key={key}>
+            <input type="checkbox" id={`availability-${key}`} checked={availability[key] !== false} disabled={!editable}
+              onChange={e => setAvailability(key, e.target.checked)} />
+            <label htmlFor={`availability-${key}`}>{label}</label>
+          </div>
+        ))}
       </div>
     </div>
   )

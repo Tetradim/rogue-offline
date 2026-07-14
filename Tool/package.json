@@ -1,19 +1,30 @@
 {
   "name": "pokerogue-pokemon-creator",
   "private": true,
-  "version": "0.2.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --open /dev.html",
     "build": "vite build",
-    "preview": "vite preview"
+    "postbuild": "node postbuild.js",
+    "preview": "vite preview",
+    "check-installer": "node --check pokerogue-mod-installer.cjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@vitejs/plugin-react": "^4.3.0",
-    "vite": "^6.0.0"
+    "@vitest/coverage-v8": "^3.2.4",
+    "jsdom": "^26.1.0",
+    "vite": "^6.0.0",
+    "vitest": "^3.2.4"
   }
 }
