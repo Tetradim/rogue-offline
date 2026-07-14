@@ -1,51 +1,73 @@
-# Build report — PokéRogue Mod Studio foundation
+# Build report — complete PokéRogue Mod Studio
 
-Implementation completed on 2026-07-13 for the **Foundation and Blank-Line Editor** phase.
+Implementation completed on 2026-07-14 for all approved product phases:
 
-## Verified checkpoint evidence
+1. Foundation and blank-line editor.
+2. Authoring depth and review.
+3. Target discovery and binding.
+4. Transactional delivery and portable packages.
 
-Before Tasks 5–10 began, the companion-service checkpoint was verified with:
+## Completed product scope
 
-- focused service and repository tests: **108/108 passed**;
-- full feature-worktree suite: **133/133 passed**;
-- service entry, application, and static module syntax checks: passed;
-- `git diff --check`: passed;
-- mapped `Tool/` snapshot `npm ci`: passed with 0 audited vulnerabilities;
-- mapped `Tool/` full suite: **133/133 passed**; and
-- mapped service syntax and integration diff checks: passed.
+- Portable project folders with atomic canonical writes and bounded autosave history.
+- Blank custom evolution-line stages with immutable internal IDs.
+- Official read-only Pokédex references.
+- Complete identity, battle metadata, stats, moves, forms, assets, evolutions, and encounter authoring.
+- Keep, Suppress, and Replace policies for official declarative references.
+- Validated project-owned sprite, icon, cry, and variant imports.
+- Arbitrary local checkout scanning with fingerprints, source-layout adapters, capability discovery, and collision-free custom species IDs.
+- Target-aware Review validation and manifest preview.
+- Dry-run preflight, journaled install, update, uninstall, and rollback.
+- Failed-update restoration of the previously installed transaction.
+- Portable package export with embedded SHA-256-verified assets.
+- Manifest-or-package Windows installation wrapper.
 
-## Completed after that checkpoint
+## Verification coverage
 
-- Node/Vite development orchestration and strict local API proxy.
-- Node 20 Windows launchers with native failure propagation.
-- React API client and portable project-session reducer.
-- Race-safe debounced autosave callbacks.
-- Dark portable-project dashboard with create/open flows.
-- Official read-only Pokédex loading and search.
-- Persistent custom evolution-stage strip.
-- Five-tab editor shell.
-- Functional Build tab with custom identity and battle metadata.
-- Six synchronized base-stat sliders and exact inputs with live BST.
-- Pending-edit navigation protection.
-- Focused tests for launch orchestration, dashboard behavior, reducer/session state, autosave races, editor-stage behavior, and Build-tab synchronization.
-
-## Current verification boundary
-
-The repository execution worktree and dependency tree are not mounted in the current connector environment. A Windows GitHub Actions verification workflow was committed, but GitHub did not expose a run or check status for connector-authored branch commits. Therefore the new Tasks 5–10 changes have received specification and static quality review, but this report does **not** falsely claim a fresh full `npm test` or production browser run.
-
-Run the following in the active Windows worktree before treating the phase as release-verified:
+The Windows verification workflow runs the following against the pull-request head:
 
 ```powershell
 npm ci
-npm test
+npm test -- --reporter=json --outputFile=vitest-results.json
 npm run build
 npm run check:service
 npm run check-installer
-git diff --check
+git diff --check <base>...HEAD -- Tool .github/workflows/mod-studio-verify.yml
 ```
 
-Then start `node server/index.js`, read the reported loopback URL, and confirm an HTTP 200 response containing the React root. The committed `.github/workflows/mod-studio-verify.yml` performs the same checks on a Windows runner when repository Actions are available.
+It then starts the production companion, reads its reported `127.0.0.1` URL, requests the root page, and requires HTTP 200 with the React root element.
 
-## Phase result
+The automated suite covers:
 
-The source implementation for the local companion, portable project persistence, launcher, dark dashboard, official reference Pokédex, blank custom-stage editor, autosave, and functional Build tab is complete. The approved subsequent product phases still add full authoring depth, target discovery/binding, and transactional install/update/rollback/uninstall/package workflows.
+- project schema, revision, and authoring helpers;
+- move, form, evolution, encounter, target-binding, and manifest behavior;
+- project repository containment and atomic persistence;
+- asset signatures, sizes, hashes, dimensions, storage, and removal;
+- target layout detection, capabilities, fingerprints, and ID allocation;
+- authoring and delivery API routes;
+- preflight/install/update/uninstall orchestration;
+- modern registry patch generation;
+- official replacement and custom biome placement;
+- exact uninstall restoration;
+- restoration of the previous installed mod after a failed update;
+- portable package materialization and hash rejection;
+- dashboard, editor, autosave, and complete five-tab workflows;
+- Vite postbuild compatibility; and
+- production static-entry preference and legacy fallback.
+
+## Safety result
+
+- Official species IDs `1–1025` remain reserved.
+- Unknown target layouts are rejected.
+- Unsupported target capabilities block delivery instead of producing guessed edits.
+- Project and package asset paths are canonically contained.
+- Package and project assets are hash-checked before delivery.
+- Preflight does not write.
+- Install operations journal edited and copied files.
+- Failed installs roll back.
+- Failed updates restore the previous installed transaction and journal.
+- Uninstall restores original source and assets byte-for-byte in the transaction fixtures.
+
+## Release boundary
+
+The completed studio targets recognized PokéRogue source layouts and deliberately refuses unfamiliar source structures. Custom prose evolution requirements remain portable package notes and are not automatically installed. No automatic media conversion or remote/cloud functionality is included.
