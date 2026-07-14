@@ -59,8 +59,10 @@ export function EditorPage({
     const index = project.stages.findIndex(stage => stage.stageId === stageId)
     const next = removeStage(project, stageId)
     if (next === project) return
-    const fallback = next.stages[Math.min(index, next.stages.length - 1)]
-    setActiveStageId(fallback.stageId)
+    if (stageId === activeStageId) {
+      const fallback = next.stages[Math.min(index, next.stages.length - 1)]
+      setActiveStageId(fallback.stageId)
+    }
     onChange(next)
   }
 
