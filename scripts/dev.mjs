@@ -34,7 +34,11 @@ export function startDevelopment({
       }
     }
     for (const child of children) {
-      if (child && child.exitCode === null && child.signalCode === null) child.kill()
+      try {
+        child?.kill?.()
+      } catch {
+        // Continue terminating the remaining child processes.
+      }
     }
     exit(Number.isInteger(code) ? code : 1)
   }
@@ -48,22 +52,28 @@ export function startDevelopment({
   }
 
   function watchChild(child, label) {
+    if (!child?.once) throw new TypeError(`${label} did not return a child process.`)
+    children.push(child)
     child.once('error', error => shutdown(1, new Error(`${label} failed to start: ${error.message}`, { cause: error })))
     child.once('exit', code => shutdown(code ?? 1))
-    children.push(child)
   }
-
-  const api = spawnProcess(execPath, ['--watch', 'server/index.js'], {
-    stdio: 'inherit',
-    env: { ...env, POKEROGUE_STUDIO_PORT: DEVELOPMENT_PORT },
-  })
-  watchChild(api, 'Companion service')
-
-  const ui = spawnProcess(npmCommand, ['run', 'dev:ui'], { stdio: 'inherit' })
-  watchChild(ui, 'Vite UI')
 
   signalTarget.on('SIGINT', onSigint)
   signalTarget.on('SIGTERM', onSigterm)
+
+  try {
+    watchChild(spawnProcess(execPath, ['--watch', 'server/index.js'], {
+      stdio: 'inherit',
+      env: { ...env, POKEROGUE_STUDIO_PORT: DEVELOPMENT_PORT },
+    }), 'Companion service')
+
+    watchChild(
+      spawnProcess(npmCommand, ['run', 'dev:ui'], { stdio: 'inherit' }),
+      'Vite UI',
+    )
+  } catch (error) {
+    shutdown(1, error)
+  }
 
   return { children: [...children], shutdown }
 }
