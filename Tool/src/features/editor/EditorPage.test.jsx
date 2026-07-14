@@ -7,9 +7,17 @@ import { EditorPage } from './EditorPage.jsx'
 function renderEditor(overrides = {}) {
   const project = overrides.project || createBlankProject({ name: 'Emberline' })
   const onChange = vi.fn()
+  const onServerSaved = vi.fn()
   const api = {
-    chooseFolder: vi.fn(), uploadAsset: vi.fn(), removeAsset: vi.fn(), analyzeTarget: vi.fn(),
-    planDelivery: vi.fn(), applyDelivery: vi.fn(), uninstallDelivery: vi.fn(), packageProject: vi.fn(),
+    chooseFolder: vi.fn(),
+    uploadAsset: vi.fn(),
+    removeAsset: vi.fn(),
+    removeStage: vi.fn(),
+    analyzeTarget: vi.fn(),
+    planDelivery: vi.fn(),
+    applyDelivery: vi.fn(),
+    uninstallDelivery: vi.fn(),
+    packageProject: vi.fn(),
   }
   render(<EditorPage
     api={api}
@@ -18,10 +26,11 @@ function renderEditor(overrides = {}) {
     saveState="saved"
     pokemon={[{ speciesNumber: 4, name: 'Charmander', primaryType: 'FIRE', speciesId: 'charmander', category: 'Lizard Pokémon' }]}
     onChange={onChange}
+    onServerSaved={onServerSaved}
     onClose={vi.fn()}
     {...overrides}
   />)
-  return { project, onChange, api }
+  return { project, onChange, onServerSaved, api }
 }
 
 describe('EditorPage', () => {
@@ -48,6 +57,16 @@ describe('EditorPage', () => {
     expect(screen.getByRole('heading', { name: /encounter policy/i })).toBeInTheDocument()
     await user.click(screen.getByRole('tab', { name: 'Review' }))
     expect(screen.getByRole('heading', { name: /review project/i })).toBeInTheDocument()
+  })
+
+  it('locks filesystem and delivery actions until autosave confirms the displayed revision', async () => {
+    const user = userEvent.setup()
+    renderEditor({ saveState: 'pending' })
+    await user.click(screen.getByRole('tab', { name: 'Assets' }))
+    expect(screen.getByLabelText(/upload asset file/i)).toBeDisabled()
+    await user.click(screen.getByRole('tab', { name: 'Review' }))
+    expect(screen.getByText(/save required/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /export package/i })).toBeDisabled()
   })
 
   it('surfaces autosave failures in the editor', () => {
