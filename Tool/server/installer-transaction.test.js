@@ -185,7 +185,7 @@ describe('transactional PokéRogue installer', () => {
     expect(generationSource).toContain('SpeciesFormChangeItemTrigger')
     expect(generationSource).toContain('EvoCondKey.FRIENDSHIP')
     expect(biomeSource).toContain('MOD-STUDIO REPLACED emberline:wildEncounters:BULBASAUR:EMBERCUB')
-    expect(biomeSource).toContain('MOD-STUDIO SPAWN emberline:PLAINS:EMBERCUB')
+    expect(biomeSource.match(/SpeciesId\.EMBERCUB/g)).toHaveLength(1)
     expect(await readFile(path.join(target, 'public', 'images', 'pokemon', '1026.png'))).toEqual(asset)
 
     const journal = JSON.parse(await readFile(path.join(target, '.pokerogue-mod-studio', 'mods', 'emberline', 'journal.json'), 'utf8'))
