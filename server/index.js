@@ -27,11 +27,31 @@ async function closeAfterStartupFailure(server) {
   await new Promise(resolve => server.close(resolve))
 }
 
+async function containOpenerError(server, onAsyncError, error) {
+  let reportedError = error
+  try {
+    await closeAfterStartupFailure(server)
+  } catch (closeError) {
+    reportedError = new AggregateError(
+      [error, closeError],
+      `Browser opener failed and the local server could not close: ${error.message}`,
+      { cause: error },
+    )
+  }
+
+  try {
+    await onAsyncError(reportedError)
+  } catch {
+    // The detached-child error is contained even if diagnostic reporting fails.
+  }
+}
+
 export async function startServer({
   env = process.env,
   argv = process.argv.slice(2),
   stdout = process.stdout,
   spawnProcess = nodeSpawn,
+  onAsyncError = () => {},
 } = {}) {
   const port = parsePort(env.POKEROGUE_STUDIO_PORT)
   const app = createApp({
@@ -60,6 +80,9 @@ export async function startServer({
         ['/c', 'start', '', url],
         { detached: true, stdio: 'ignore', windowsHide: true },
       )
+      child.once('error', error => {
+        void containOpenerError(server, onAsyncError, error)
+      })
       child.unref()
     }
   } catch (error) {
@@ -78,12 +101,25 @@ export async function runCli({
   start = startServer,
   processTarget = process,
 } = {}) {
-  try {
-    const started = await start({ env, argv, stdout })
-    return { exitCode: 0, started }
-  } catch (error) {
+  let result
+  let pendingAsyncError
+  const reportError = error => {
     stderr.write(`Failed to start PokeRogue Mod Studio: ${error.message}\n`)
     processTarget.exitCode = 1
+    pendingAsyncError = error
+    if (result) {
+      result.exitCode = 1
+      result.error = error
+    }
+  }
+
+  try {
+    const started = await start({ env, argv, stdout, onAsyncError: reportError })
+    result = { exitCode: pendingAsyncError ? 1 : 0, started }
+    if (pendingAsyncError) result.error = pendingAsyncError
+    return result
+  } catch (error) {
+    reportError(error)
     return { exitCode: 1, error }
   }
 }

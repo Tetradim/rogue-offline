@@ -1,8 +1,18 @@
 // @vitest-environment node
 
 import childProcess from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import http, { createServer, request as requestHttp } from 'node:http'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  open as openFile,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -10,6 +20,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from './app.js'
 import { mutationOriginAllowed } from './http-utils.js'
 import { startServer } from './index.js'
+import { createProjectRepository } from './project-repository.js'
 import { createStaticHandler } from './static-files.js'
 import { selectWindowsFolder } from './windows-dialog.js'
 
@@ -210,6 +221,40 @@ describe('local companion API', () => {
     expect(repository.open).toHaveBeenCalledWith(input.projectDir)
   })
 
+  it('creates, saves, and opens a project through the real repository', async () => {
+    const parentDir = await makeTemporaryDirectory()
+    const ids = ['project-roundtrip', 'stage-roundtrip']
+    const repository = createProjectRepository({
+      now: () => '2026-07-13T12:00:00.000Z',
+      idFactory: () => ids.shift(),
+    })
+    const { server } = await startApp({ repository })
+
+    const created = await jsonRequest(server, 'POST', '/api/projects', {
+      parentDir,
+      name: 'Roundtrip Project',
+    })
+    const draft = structuredClone(created.json.project)
+    draft.name = 'Roundtrip Saved'
+    const saved = await jsonRequest(server, 'PUT', '/api/projects', {
+      projectDir: created.json.projectDir,
+      project: draft,
+    })
+    const opened = await jsonRequest(server, 'POST', '/api/projects/open', {
+      projectDir: created.json.projectDir,
+    })
+
+    expect(created.statusCode).toBe(201)
+    expect(saved.statusCode).toBe(200)
+    expect(saved.json.project).toMatchObject({
+      projectId: 'project-roundtrip',
+      name: 'Roundtrip Saved',
+      revision: 2,
+    })
+    expect(opened.statusCode).toBe(200)
+    expect(opened.json).toEqual(saved.json)
+  })
+
   it('returns the selected folder and preserves an empty cancellation result', async () => {
     const selectFolder = vi.fn()
       .mockResolvedValueOnce('C:\\Mods')
@@ -345,7 +390,7 @@ describe('local companion API', () => {
     ])
   })
 
-  it('uses known error statuses, classifies project input failures, and reports unexpected failures as 500', async () => {
+  it('maps expected project failures to contextual actionable 4xx responses', async () => {
     const knownError = Object.assign(new Error('Project is locked by another editor.'), {
       statusCode: 423,
     })
@@ -357,14 +402,21 @@ describe('local companion API', () => {
         open: vi.fn(async () => { throw new Error('Invalid project JSON in "project.json".') }),
       }),
     })
-    const unexpected = await startApp({
-      selectFolder: vi.fn(async () => { throw new Error('PowerShell process failed.') }),
-    })
     const missingDirectoryError = new Error('Could not resolve project directory for saving.', {
       cause: Object.assign(new Error('Path not found.'), { code: 'ENOENT' }),
     })
     const missing = await startApp({
       repository: makeRepository({ open: vi.fn(async () => { throw missingDirectoryError }) }),
+    })
+    const staleError = new Error('Cannot save stale project revision 1; canonical revision is 2.')
+    const stale = await startApp({
+      repository: makeRepository({ save: vi.fn(async () => { throw staleError }) }),
+    })
+    const permissionError = Object.assign(new Error('Project folder access denied.'), {
+      code: 'EACCES',
+    })
+    const permission = await startApp({
+      repository: makeRepository({ open: vi.fn(async () => { throw permissionError }) }),
     })
 
     const knownResponse = await jsonRequest(known.server, 'POST', '/api/projects/open', {
@@ -373,25 +425,63 @@ describe('local companion API', () => {
     const invalidResponse = await jsonRequest(invalid.server, 'POST', '/api/projects/open', {
       projectDir: 'C:\\Mods\\Invalid',
     })
-    const unexpectedResponse = await jsonRequest(unexpected.server, 'POST', '/api/dialog/folder', {})
     const missingResponse = await jsonRequest(missing.server, 'POST', '/api/projects/open', {
       projectDir: 'C:\\Mods\\Missing',
+    })
+    const staleResponse = await jsonRequest(stale.server, 'PUT', '/api/projects', {
+      projectDir: 'C:\\Mods\\Stale',
+      project: { revision: 1 },
+    })
+    const permissionResponse = await jsonRequest(permission.server, 'POST', '/api/projects/open', {
+      projectDir: 'C:\\Mods\\Denied',
     })
 
     expect(knownResponse.statusCode).toBe(423)
     expect(knownResponse.json).toEqual({ error: knownError.message })
     expect(invalidResponse.statusCode).toBe(400)
     expect(invalidResponse.json.error).toMatch(/invalid project json/i)
-    expect(unexpectedResponse.statusCode).toBe(500)
-    expect(unexpectedResponse.json).toEqual({ error: 'PowerShell process failed.' })
     expect(missingResponse.statusCode).toBe(404)
     expect(missingResponse.json).toEqual({ error: missingDirectoryError.message })
+    expect(staleResponse.statusCode).toBe(409)
+    expect(staleResponse.json).toEqual({ error: staleError.message })
+    expect(permissionResponse.statusCode).toBe(403)
+    expect(permissionResponse.json).toEqual({ error: permissionError.message })
+  })
+
+  it('hides picker and runtime diagnostics behind a generic 500 response', async () => {
+    const pickerError = Object.assign(
+      new Error('spawn C:\\private-tools\\powershell.exe ENOENT'),
+      { code: 'ENOENT' },
+    )
+    const syntaxError = new SyntaxError('Unexpected token in C:\\private-projects\\project.json')
+    const onError = vi.fn()
+    const picker = await startApp({
+      selectFolder: vi.fn(async () => { throw pickerError }),
+      onError,
+    })
+    const runtime = await startApp({
+      repository: makeRepository({ open: vi.fn(async () => { throw syntaxError }) }),
+      onError,
+    })
+
+    const pickerResponse = await jsonRequest(picker.server, 'POST', '/api/dialog/folder', {})
+    const runtimeResponse = await jsonRequest(runtime.server, 'POST', '/api/projects/open', {
+      projectDir: 'C:\\Mods\\Runtime Failure',
+    })
+
+    for (const response of [pickerResponse, runtimeResponse]) {
+      expect(response.statusCode).toBe(500)
+      expect(response.json).toEqual({ error: 'Internal service error.' })
+      expect(response.text).not.toMatch(/private|powershell|unexpected token/i)
+    }
+    expect(onError).toHaveBeenCalledWith(pickerError, expect.any(Object))
+    expect(onError).toHaveBeenCalledWith(syntaxError, expect.any(Object))
   })
 
   it('allows desktop clients and matching hosts but blocks supplied cross-origin mutations', async () => {
     const selectFolder = vi.fn(async () => 'C:\\Mods')
     const { server } = await startApp({ selectFolder })
-    const matchingOrigin = `https://${serverHost(server)}`
+    const matchingOrigin = `http://${serverHost(server)}`
 
     const desktop = await jsonRequest(server, 'POST', '/api/dialog/folder', {})
     const matching = await jsonRequest(server, 'POST', '/api/dialog/folder', {}, {
@@ -410,6 +500,26 @@ describe('local companion API', () => {
     expect(blocked.json).toEqual({ error: 'Origin does not match this local service.' })
     expect(malformed.statusCode).toBe(403)
     expect(selectFolder).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a spoofed Host and HTTPS Origin at the live loopback boundary', async () => {
+    const selectFolder = vi.fn(async () => 'C:\\Mods')
+    const { server } = await startApp({ selectFolder })
+    const localPort = server.address().port
+
+    const spoofedHost = await jsonRequest(server, 'POST', '/api/dialog/folder', {}, {
+      host: `attacker.example:${localPort}`,
+      origin: `http://attacker.example:${localPort}`,
+    })
+    const wrongScheme = await jsonRequest(server, 'POST', '/api/dialog/folder', {}, {
+      origin: `https://127.0.0.1:${localPort}`,
+    })
+
+    expect(spoofedHost.statusCode).toBe(403)
+    expect(wrongScheme.statusCode).toBe(403)
+    expect(spoofedHost.json).toEqual({ error: 'Origin does not match this local service.' })
+    expect(wrongScheme.json).toEqual({ error: 'Origin does not match this local service.' })
+    expect(selectFolder).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -593,6 +703,63 @@ describe('static file handler', () => {
     expect(response.text).not.toContain('not public')
   })
 
+  it('refuses a file reached through an in-root link to an outside directory', async () => {
+    const parent = await makeTemporaryDirectory()
+    const dist = path.join(parent, 'dist')
+    const outside = path.join(parent, 'outside')
+    await mkdir(dist)
+    await mkdir(outside)
+    await writeFile(path.join(outside, 'secret.txt'), 'outside secret bytes')
+    await symlink(
+      outside,
+      path.join(dist, 'linked-outside'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    const server = await listen(createApp({
+      repository: makeRepository(),
+      selectFolder: vi.fn(),
+      staticHandler: createStaticHandler(dist),
+    }))
+
+    const response = await request(server, { pathname: '/linked-outside/secret.txt' })
+
+    expect(response.statusCode).toBe(404)
+    expect(response.json).toEqual({ error: 'Static file not found.' })
+    expect(response.text).not.toContain('outside secret bytes')
+  })
+
+  it('stats and reads through the same opened canonical file handle', async () => {
+    const dist = await makeTemporaryDirectory()
+    const contents = 'single handle contents'
+    await writeFile(path.join(dist, 'asset.txt'), contents)
+    let wrappedHandle
+    const openCanonicalFile = vi.fn(async (...args) => {
+      const handle = await openFile(...args)
+      wrappedHandle = {
+        stat: vi.fn((...statArgs) => handle.stat(...statArgs)),
+        readFile: vi.fn((...readArgs) => handle.readFile(...readArgs)),
+        close: vi.fn((...closeArgs) => handle.close(...closeArgs)),
+      }
+      return wrappedHandle
+    })
+    const server = await listen(createApp({
+      repository: makeRepository(),
+      selectFolder: vi.fn(),
+      staticHandler: createStaticHandler(dist, {
+        fileSystem: { realpath, open: openCanonicalFile },
+      }),
+    }))
+
+    const response = await request(server, { pathname: '/asset.txt' })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.text).toBe(contents)
+    expect(openCanonicalFile).toHaveBeenCalledOnce()
+    expect(wrappedHandle.stat).toHaveBeenCalledOnce()
+    expect(wrappedHandle.readFile).toHaveBeenCalledOnce()
+    expect(wrappedHandle.close).toHaveBeenCalledOnce()
+  })
+
   it('returns false for missing files and directories', async () => {
     const dist = await makeTemporaryDirectory()
     await mkdir(path.join(dist, 'assets'))
@@ -605,10 +772,11 @@ describe('static file handler', () => {
   it('does not swallow unexpected filesystem failures', async () => {
     const dist = await makeTemporaryDirectory()
     const failure = new Error('filesystem invariant failed')
+    await writeFile(path.join(dist, 'asset.js'), 'asset')
     const handler = createStaticHandler(dist, {
       fileSystem: {
-        stat: async () => ({ isFile: () => true, size: 10 }),
-        readFile: async () => { throw failure },
+        realpath,
+        open: async () => { throw failure },
       },
     })
 
@@ -716,13 +884,64 @@ describe('local server startup', () => {
     )
   })
 
+  it('contains a delayed opener error, reports failure, and closes the announced server', async () => {
+    const { runCli } = await import('./index.js')
+    const failure = new Error('delayed opener failure')
+    const opener = new EventEmitter()
+    opener.unref = vi.fn()
+    const spawnProcess = vi.fn(() => {
+      setImmediate(() => opener.emit('error', failure))
+      return opener
+    })
+    const stdoutWrites = []
+    const stderrWrites = []
+    const processTarget = { exitCode: undefined }
+    const uncaughtException = vi.fn()
+    const unhandledRejection = vi.fn()
+    process.on('uncaughtException', uncaughtException)
+    process.on('unhandledRejection', unhandledRejection)
+    let result
+
+    try {
+      result = await runCli({
+        env: { POKEROGUE_STUDIO_PORT: '0' },
+        argv: ['--open'],
+        stdout: { write: chunk => stdoutWrites.push(chunk) },
+        stderr: { write: chunk => stderrWrites.push(chunk) },
+        processTarget,
+        start: options => startServer({ ...options, spawnProcess }),
+      })
+      openServers.add(result.started.server)
+      await vi.waitFor(() => expect(processTarget.exitCode).toBe(1))
+    } finally {
+      process.off('uncaughtException', uncaughtException)
+      process.off('unhandledRejection', unhandledRejection)
+    }
+
+    expect(result.exitCode).toBe(1)
+    expect(result.error).toBe(failure)
+    expect(result.started.server.listening).toBe(false)
+    expect(stdoutWrites).toHaveLength(1)
+    expect(JSON.parse(stdoutWrites[0])).toEqual({
+      type: 'server-started',
+      url: result.started.url,
+    })
+    expect(stderrWrites).toEqual([
+      'Failed to start PokeRogue Mod Studio: delayed opener failure\n',
+    ])
+    expect(opener.unref).toHaveBeenCalledOnce()
+    expect(uncaughtException).not.toHaveBeenCalled()
+    expect(unhandledRejection).not.toHaveBeenCalled()
+  })
+
   it('binds loopback on an ephemeral port, reports one startup line, and opens on request', async () => {
     const writes = []
     const spawnCalls = []
-    const unref = vi.fn()
+    const opener = new EventEmitter()
+    opener.unref = vi.fn()
     const spawnProcess = vi.fn((...args) => {
       spawnCalls.push(args)
-      return { unref }
+      return opener
     })
 
     const started = await startServer({
@@ -743,7 +962,8 @@ describe('local server startup', () => {
       ['/c', 'start', '', started.url],
       { detached: true, stdio: 'ignore', windowsHide: true },
     ]])
-    expect(unref).toHaveBeenCalledOnce()
+    expect(opener.listenerCount('error')).toBe(1)
+    expect(opener.unref).toHaveBeenCalledOnce()
   })
 
   it.each(['', 'abc', '-1', '1.5', '65536'])('rejects invalid configured port %j', async configuredPort => {

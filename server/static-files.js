@@ -1,4 +1,4 @@
-import { readFile as nodeReadFile, stat as nodeStat } from 'node:fs/promises'
+import { open as nodeOpen, realpath as nodeRealpath } from 'node:fs/promises'
 import path from 'node:path'
 
 const CONTENT_TYPES = new Map([
@@ -23,6 +23,14 @@ const CONTENT_TYPES = new Map([
 
 function isMissingFileError(error) {
   return error?.code === 'ENOENT' || error?.code === 'EISDIR'
+}
+
+function isInsideRoot(rootDir, candidate) {
+  const relative = path.relative(rootDir, candidate)
+  return (
+    relative === ''
+    || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  )
 }
 
 function resolvePublicPath(rootDir, requestUrl) {
@@ -56,9 +64,17 @@ function resolvePublicPath(rootDir, requestUrl) {
 export function createStaticHandler(rootDir, { fileSystem: fileSystemOverrides } = {}) {
   const resolvedRoot = path.resolve(rootDir)
   const fileSystem = {
-    stat: nodeStat,
-    readFile: nodeReadFile,
+    realpath: nodeRealpath,
+    open: nodeOpen,
     ...fileSystemOverrides,
+  }
+  let canonicalRoot
+
+  async function resolveCanonicalRoot() {
+    if (canonicalRoot) return canonicalRoot
+    const resolved = await fileSystem.realpath(resolvedRoot)
+    canonicalRoot = resolved
+    return resolved
   }
 
   return async function serveStatic(request, response) {
@@ -66,32 +82,37 @@ export function createStaticHandler(rootDir, { fileSystem: fileSystemOverrides }
     const filePath = resolvePublicPath(resolvedRoot, request.url)
     if (!filePath) return false
 
-    let fileStats
+    let resolvedCanonicalRoot
+    let canonicalFilePath
     try {
-      fileStats = await fileSystem.stat(filePath)
+      resolvedCanonicalRoot = await resolveCanonicalRoot()
+      canonicalFilePath = await fileSystem.realpath(filePath)
     } catch (error) {
       if (isMissingFileError(error)) return false
       throw error
     }
-    if (!fileStats.isFile()) return false
+    if (!isInsideRoot(resolvedCanonicalRoot, canonicalFilePath)) return false
 
-    let body
-    if (request.method === 'GET') {
-      try {
-        body = await fileSystem.readFile(filePath)
-      } catch (error) {
-        if (isMissingFileError(error)) return false
-        throw error
-      }
+    let handle
+    try {
+      handle = await fileSystem.open(canonicalFilePath, 'r')
+      const fileStats = await handle.stat()
+      if (!fileStats.isFile()) return false
+      const body = request.method === 'GET' ? await handle.readFile() : undefined
+
+      const contentLength = request.method === 'HEAD' ? fileStats.size : body.length
+      response.writeHead(200, {
+        'content-type': CONTENT_TYPES.get(path.extname(canonicalFilePath).toLowerCase())
+          ?? 'application/octet-stream',
+        'content-length': String(contentLength),
+      })
+      response.end(request.method === 'HEAD' ? undefined : body)
+      return true
+    } catch (error) {
+      if (isMissingFileError(error)) return false
+      throw error
+    } finally {
+      await handle?.close()
     }
-
-    const contentLength = request.method === 'HEAD' ? fileStats.size : body.length
-    response.writeHead(200, {
-      'content-type': CONTENT_TYPES.get(path.extname(filePath).toLowerCase())
-        ?? 'application/octet-stream',
-      'content-length': String(contentLength),
-    })
-    response.end(request.method === 'HEAD' ? undefined : body)
-    return true
   }
 }

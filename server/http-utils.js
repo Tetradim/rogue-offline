@@ -96,25 +96,16 @@ export function sendJson(response, statusCode, value, { head = false } = {}) {
 export function mutationOriginAllowed(request) {
   const origin = request.headers.origin
   if (origin === undefined) return true
-  if (typeof origin !== 'string' || typeof request.headers.host !== 'string') return false
+  const host = request.headers.host
+  const localPort = request.socket?.localPort
+  if (
+    typeof origin !== 'string'
+    || typeof host !== 'string'
+    || request.socket?.localAddress !== '127.0.0.1'
+    || !Number.isInteger(localPort)
+  ) return false
 
-  try {
-    const parsedOrigin = new URL(origin)
-    const isHttpOrigin = parsedOrigin.protocol === 'http:' || parsedOrigin.protocol === 'https:'
-    const isOriginOnly = (
-      parsedOrigin.username === ''
-      && parsedOrigin.password === ''
-      && parsedOrigin.pathname === '/'
-      && parsedOrigin.search === ''
-      && parsedOrigin.hash === ''
-      && origin === parsedOrigin.origin
-    )
-    return (
-      isHttpOrigin
-      && isOriginOnly
-      && parsedOrigin.host.toLowerCase() === request.headers.host.trim().toLowerCase()
-    )
-  } catch {
-    return false
-  }
+  const serializedHost = localPort === 80 ? '127.0.0.1' : `127.0.0.1:${localPort}`
+  const validHost = host === serializedHost || (localPort === 80 && host === '127.0.0.1:80')
+  return validHost && origin === `http://${serializedHost}`
 }

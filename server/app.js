@@ -8,28 +8,47 @@ const ROUTE_METHODS = new Map([
   ['/api/dialog/folder', ['POST']],
 ])
 
-function httpError(message, statusCode) {
-  return Object.assign(new Error(message), { statusCode })
+function httpError(message, statusCode, cause) {
+  return Object.assign(new Error(message, cause ? { cause } : undefined), { statusCode })
 }
 
 function isApiPath(pathname) {
   return pathname === '/api' || pathname.startsWith('/api/')
 }
 
-function isRepositoryInputError(error) {
-  return /(?:project\s+(?:name|validation|identity)|invalid\s+project\s+json|cannot\s+save\s+stale|windows\s+folder\s+name|project\s+revision)/i
-    .test(error?.message ?? '')
-}
-
 function errorStatus(error) {
   if (Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode <= 599) {
     return error.statusCode
   }
+  return 500
+}
+
+function projectErrorStatus(error) {
+  const explicitStatus = errorStatus(error)
+  if (explicitStatus !== 500 || error?.statusCode === 500) return explicitStatus
+
   const errorCode = error?.code ?? error?.cause?.code
   if (errorCode === 'ENOENT') return 404
-  if (errorCode === 'EEXIST') return 409
-  if (error instanceof SyntaxError || isRepositoryInputError(error)) return 400
+  if (errorCode === 'EACCES' || errorCode === 'EPERM') return 403
+
+  const message = error?.message ?? ''
+  if (/(?:cannot save stale project revision|project identity mismatch)/i.test(message)) return 409
+  if (
+    /(?:project validation failed|project name (?:is required|cannot be used)|invalid project (?:json|import|shape)|unsupported project)/i
+      .test(message)
+  ) return 400
   return 500
+}
+
+async function runProjectOperation(operation) {
+  try {
+    return await operation()
+  } catch (error) {
+    const statusCode = projectErrorStatus(error)
+    if (statusCode === 500 && error?.statusCode === undefined) throw error
+    if (error?.statusCode === statusCode) throw error
+    throw httpError(error.message, statusCode, error)
+  }
 }
 
 function requireObjectBody(value) {
@@ -72,21 +91,32 @@ function sendMethodNotAllowed(response, request, methods) {
   })
 }
 
-function sendError(response, request, error) {
+function reportInternalError(onError, error, request) {
+  try {
+    const result = onError(error, request)
+    result?.catch?.(() => {})
+  } catch {
+    // Error reporting must never create a second listener failure.
+  }
+}
+
+function sendError(response, request, error, onError) {
   if (response.writableEnded) return
   if (response.headersSent) {
     response.destroy(error)
     return
   }
-  const message = typeof error?.message === 'string' && error.message
-    ? error.message
-    : 'Unexpected local service error.'
-  sendJson(response, errorStatus(error), { error: message }, {
+  const statusCode = errorStatus(error)
+  if (statusCode >= 500) reportInternalError(onError, error, request)
+  const message = statusCode >= 500
+    ? 'Internal service error.'
+    : error.message
+  sendJson(response, statusCode, { error: message }, {
     head: request.method === 'HEAD',
   })
 }
 
-export function createApp({ repository, selectFolder, staticHandler }) {
+export function createApp({ repository, selectFolder, staticHandler, onError = () => {} }) {
   async function handleRequest(request, response) {
     const pathname = request.url.split('?', 1)[0]
 
@@ -116,15 +146,17 @@ export function createApp({ repository, selectFolder, staticHandler }) {
       const body = requireObjectBody(await readJson(request))
       validateRouteBody(pathname, request.method, body)
       if (pathname === '/api/projects' && request.method === 'POST') {
-        sendJson(response, 201, await repository.create(body))
+        sendJson(response, 201, await runProjectOperation(() => repository.create(body)))
         return
       }
       if (pathname === '/api/projects' && request.method === 'PUT') {
-        sendJson(response, 200, await repository.save(body.projectDir, body.project))
+        sendJson(response, 200, await runProjectOperation(
+          () => repository.save(body.projectDir, body.project),
+        ))
         return
       }
       if (pathname === '/api/projects/open') {
-        sendJson(response, 200, await repository.open(body.projectDir))
+        sendJson(response, 200, await runProjectOperation(() => repository.open(body.projectDir)))
         return
       }
       if (pathname === '/api/dialog/folder') {
@@ -144,7 +176,7 @@ export function createApp({ repository, selectFolder, staticHandler }) {
   return function localCompanionApp(request, response) {
     void handleRequest(request, response).catch(error => {
       try {
-        sendError(response, request, error)
+        sendError(response, request, error, onError)
       } catch (sendFailure) {
         response.destroy(sendFailure)
       }
