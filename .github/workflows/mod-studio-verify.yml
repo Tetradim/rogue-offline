@@ -29,7 +29,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -59,7 +59,25 @@ jobs:
         run: throw 'Vitest failed. See the vitest-results artifact.'
 
       - name: Build production UI
-        run: npm run build
+        id: build
+        continue-on-error: true
+        run: |
+          & npm.cmd run build *> build.log
+          $code = $LASTEXITCODE
+          Get-Content build.log
+          exit $code
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: Tool/build.log
+          if-no-files-found: error
+
+      - name: Enforce build result
+        if: steps.build.outcome == 'failure'
+        run: throw 'Vite build failed. See the build-log artifact.'
 
       - name: Check service syntax
         run: npm run check:service
@@ -67,8 +85,14 @@ jobs:
       - name: Check installer syntax
         run: npm run check-installer
 
-      - name: Check published diff whitespace
-        run: git diff --check HEAD^ -- Tool
+      - name: Check committed diff whitespace
+        run: |
+          if ($env:GITHUB_BASE_REF) {
+            $base = "origin/$env:GITHUB_BASE_REF"
+            git diff --check "$base...HEAD" -- Tool .github/workflows/mod-studio-verify.yml
+          } else {
+            git diff --check HEAD^ HEAD -- Tool .github/workflows/mod-studio-verify.yml
+          }
         working-directory: .
 
       - name: Smoke-test production localhost service
