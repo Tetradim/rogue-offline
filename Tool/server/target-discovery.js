@@ -23,9 +23,7 @@ async function walk(root) {
       continue
     }
     for (const entry of entries) {
-      if (files.length + directories.length > MAX_ENTRIES) {
-        throw targetError('Target checkout is too large to inspect safely.')
-      }
+      if (files.length + directories.length > MAX_ENTRIES) throw targetError('Target checkout is too large to inspect safely.')
       const full = path.join(directory, entry.name)
       if (entry.isDirectory()) {
         if (!SKIP_DIRECTORIES.has(entry.name)) pending.push(full)
@@ -42,10 +40,7 @@ function normalized(relativePath) {
 }
 
 function choose(files, root, patterns) {
-  const candidates = files.map(file => ({
-    file,
-    relative: normalized(path.relative(root, file)).toLowerCase(),
-  }))
+  const candidates = files.map(file => ({ file, relative: normalized(path.relative(root, file)).toLowerCase() }))
   for (const pattern of patterns) {
     const found = candidates.find(candidate => pattern.test(candidate.relative))
     if (found) return found.file
@@ -55,27 +50,18 @@ function choose(files, root, patterns) {
 
 async function readOptional(file) {
   if (!file) return ''
-  try {
-    return await readFile(file, 'utf8')
-  } catch {
-    return ''
-  }
+  try { return await readFile(file, 'utf8') } catch { return '' }
 }
 
 async function readPackageJson(file) {
   if (!file) return {}
-  try {
-    return JSON.parse(await readFile(file, 'utf8'))
-  } catch {
-    return {}
-  }
+  try { return JSON.parse(await readFile(file, 'utf8')) } catch { return {} }
 }
 
 function parseSpeciesIds(source) {
   const ids = new Set()
   const names = new Set()
-  const pattern = /^\s*([A-Z][A-Z0-9_]*)\s*=\s*(\d+)\s*,?/gm
-  for (const match of source.matchAll(pattern)) {
+  for (const match of source.matchAll(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(\d+)\s*,?/gm)) {
     names.add(match[1])
     ids.add(Number(match[2]))
   }
@@ -90,49 +76,38 @@ async function resolveGitRevision(root) {
   return (await readOptional(path.join(root, '.git', ref))).trim() || ref
 }
 
+function validateSourceAnchors(speciesSource, generationSource) {
+  if (!/\benum\s+SpeciesId\b/.test(speciesSource)) {
+    throw targetError('The detected species ID file does not contain a recognizable SpeciesId enum.')
+  }
+  if (!/\bgenerationOneSpeciesData\b/.test(generationSource) || !/\bPokemonSpeciesData\b/.test(generationSource)) {
+    throw targetError('The detected species registry does not contain the conservative generationOneSpeciesData/PokemonSpeciesData anchors required by this adapter.')
+  }
+}
+
 export async function analyzePokeRogueTarget(targetDir, project = null) {
   const targetRoot = await realpath(path.resolve(targetDir)).catch(error => {
-    throw targetError(
-      `Could not open target checkout: ${error.message}`,
-      error.code === 'ENOENT' ? 404 : 400,
-    )
+    throw targetError(`Could not open target checkout: ${error.message}`, error.code === 'ENOENT' ? 404 : 400)
   })
   if (!(await stat(targetRoot)).isDirectory()) throw targetError('Target path must be a directory.')
 
   const { files, directories } = await walk(targetRoot)
   const packageFile = choose(files, targetRoot, [/^package\.json$/, /\/package\.json$/])
   const packageJson = await readPackageJson(packageFile)
-  const speciesId = choose(files, targetRoot, [
-    /(^|\/)src\/enums\/species-id\.tsx?$/,
-    /species[-_]id\.tsx?$/,
-    /species.*enum.*\.tsx?$/,
-  ])
-  const generation = choose(files, targetRoot, [
-    /(^|\/)src\/data\/balance\/species\/generation-0?1\.ts$/,
-    /generation-\d+\.ts$/,
-    /species.*data.*\.ts$/,
-  ])
-  if (!speciesId || !generation) {
-    throw targetError('This folder does not contain a recognizable PokéRogue species enum and species registry.')
-  }
-
-  const eggMoves = choose(files, targetRoot, [/egg-moves\.ts$/, /egg.*move.*\.ts$/])
-  const encounterFiles = files.filter(file => (
-    /(?:biome|encounter|wild|starter|trainer|boss|reward|mystery)/i
-      .test(normalized(path.relative(targetRoot, file)))
-    && /\.tsx?$/.test(file)
-  ))
-  const pokemonImages = directories.find(directory => (
-    /(?:^|[\\/])(?:assets|public)[\\/]images[\\/]pokemon$/i.test(directory)
-  )) || null
-  const pokemonIcons = directories.find(directory => (
-    /(?:^|[\\/])(?:assets|public)[\\/]images[\\/]pokemon[\\/](?:icons|icon)$/i.test(directory)
-  )) || null
-  const cryDir = directories.find(directory => (
-    /(?:^|[\\/])(?:assets|public)[\\/]audio[\\/](?:cry|cries)$/i.test(directory)
-  )) || null
+  const speciesId = choose(files, targetRoot, [/(^|\/)src\/enums\/species-id\.tsx?$/, /species[-_]id\.tsx?$/, /species.*enum.*\.tsx?$/])
+  const generation = choose(files, targetRoot, [/(^|\/)src\/data\/balance\/species\/generation-0?1\.ts$/, /generation-\d+\.ts$/, /species.*data.*\.ts$/])
+  if (!speciesId || !generation) throw targetError('This folder does not contain a recognizable PokéRogue species enum and species registry.')
 
   const speciesSource = await readFile(speciesId, 'utf8')
+  const generationSource = await readFile(generation, 'utf8')
+  validateSourceAnchors(speciesSource, generationSource)
+
+  const eggMoves = choose(files, targetRoot, [/egg-moves\.ts$/, /egg.*move.*\.ts$/])
+  const encounterFiles = files.filter(file => /(?:biome|encounter|wild|starter|trainer|boss|reward|mystery)/i.test(normalized(path.relative(targetRoot, file))) && /\.tsx?$/.test(file))
+  const pokemonImages = directories.find(directory => /(?:^|[\\/])(?:assets|public)[\\/]images[\\/]pokemon$/i.test(directory)) || null
+  const pokemonIcons = directories.find(directory => /(?:^|[\\/])(?:assets|public)[\\/]images[\\/]pokemon[\/](?:icons|icon)$/i.test(directory)) || null
+  const cryDir = directories.find(directory => /(?:^|[\\/])(?:assets|public)[\\/]audio[\/](?:cry|cries)$/i.test(directory)) || null
+
   const registry = parseSpeciesIds(speciesSource)
   const highestId = Math.max(1025, ...registry.ids)
   const stageAllocations = {}
@@ -152,17 +127,10 @@ export async function analyzePokeRogueTarget(targetDir, project = null) {
     pokemonImages: pokemonImages ? normalized(path.relative(targetRoot, pokemonImages)) : null,
     pokemonIcons: pokemonIcons ? normalized(path.relative(targetRoot, pokemonIcons)) : null,
     cryDir: cryDir ? normalized(path.relative(targetRoot, cryDir)) : null,
-    encounterFiles: encounterFiles
-      .map(file => normalized(path.relative(targetRoot, file)))
-      .slice(0, 200),
+    encounterFiles: encounterFiles.map(file => normalized(path.relative(targetRoot, file))).slice(0, 200),
   }
-  const fingerprint = createHash('sha256')
-    .update(JSON.stringify({ packageVersion, revision, relativeLayout }))
-    .digest('hex')
-  const modern = (
-    relativeLayout.speciesId === 'src/enums/species-id.ts'
-    && relativeLayout.generation.includes('src/data/balance/species/')
-  )
+  const fingerprint = createHash('sha256').update(JSON.stringify({ packageVersion, revision, relativeLayout })).digest('hex')
+  const modern = relativeLayout.speciesId === 'src/enums/species-id.ts' && relativeLayout.generation.includes('src/data/balance/species/')
   const capabilities = {
     species: true,
     evolutions: true,
@@ -183,12 +151,8 @@ export async function analyzePokeRogueTarget(targetDir, project = null) {
   if (!pokemonIcons) warnings.push('Pokémon icon directory was not detected; uploaded icons cannot be delivered automatically.')
   if (!cryDir) warnings.push('Cry directory was not detected; uploaded cries cannot be delivered automatically.')
   if (!encounterFiles.length) warnings.push('Encounter tables were not detected; placement and suppression are unavailable for this checkout.')
-  if ((project?.stages || []).some(stage => stage.forms?.length)) {
-    warnings.push('This conservative adapter preserves authored forms but cannot safely install form definitions into this checkout.')
-  }
-  if ((project?.evolutionEdges || []).some(edge => !['level', 'item'].includes(edge.trigger?.type))) {
-    warnings.push('This conservative adapter installs level and item evolution requirements only.')
-  }
+  if ((project?.stages || []).some(stage => stage.forms?.length)) warnings.push('This conservative adapter preserves authored forms but cannot safely install form definitions into this checkout.')
+  if ((project?.evolutionEdges || []).some(edge => !['level', 'item'].includes(edge.trigger?.type))) warnings.push('This conservative adapter installs level and item evolution requirements only.')
 
   const adapter = modern ? 'pokerogue-modern-source' : 'pokerogue-compatible-source'
   return {
@@ -198,11 +162,7 @@ export async function analyzePokeRogueTarget(targetDir, project = null) {
     fingerprint,
     version: packageVersion || revision?.slice(0, 12) || 'unversioned checkout',
     revision,
-    packageManager: files.some(file => path.basename(file) === 'pnpm-lock.yaml')
-      ? 'pnpm'
-      : files.some(file => path.basename(file) === 'yarn.lock')
-        ? 'yarn'
-        : 'npm',
+    packageManager: files.some(file => path.basename(file) === 'pnpm-lock.yaml') ? 'pnpm' : files.some(file => path.basename(file) === 'yarn.lock') ? 'yarn' : 'npm',
     layout: relativeLayout,
     capabilities,
     stageAllocations,
