@@ -4,6 +4,8 @@
 .form-editor-heading code { color: var(--muted); font-size: 9px; }
 .form-identity-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .form-identity-grid label { margin: 0; }
+.form-checkbox { display: flex !important; align-items: center; gap: 7px !important; align-self: end; min-height: 38px; }
+.form-checkbox input { width: auto; }
 .form-stat-overrides { display: grid; grid-template-columns: repeat(6, minmax(68px, 1fr)); gap: 7px; border: 1px solid var(--line); border-radius: 8px; margin: 0; padding: 9px; }
 .form-stat-overrides legend { color: var(--muted); padding-inline: 5px; font-size: 9px; font-weight: 800; }
 .form-stat-overrides label { margin: 0; font-size: 9px; }
