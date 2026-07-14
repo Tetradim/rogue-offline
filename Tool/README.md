@@ -1,140 +1,176 @@
 # PokéRogue Mod Studio
 
-A Windows-local creation studio for portable custom PokéRogue evolution-line projects. The application uses a React browser interface backed by a loopback-only Node companion service that owns project-folder access and atomic autosaves.
+A Windows-first, local/offline authoring and delivery tool for portable PokéRogue evolution-line mods.
 
-This repository currently contains the completed **Foundation and Blank-Line Editor** phase. It replaces the legacy browser-storage editor with portable projects, a dark Showdown-inspired workflow, an official read-only Pokédex, custom stage management, and a functional Build tab.
+The studio creates blank custom species rather than cloning official species. Official Pokémon remain read-only references and can be kept, suppressed from encounter systems, or replaced by a selected custom stage without deleting their IDs.
 
-## Current capabilities
+## Launch the studio
 
-- Create a self-contained portable project folder from the dashboard.
-- Open an existing project folder through the Windows folder picker.
-- Persist canonical `project.json` data with atomic writes and bounded autosave history.
-- Start every custom evolutionary family with one neutral blank stage.
-- Add and remove custom stages while preserving immutable internal stage IDs.
-- Search all official species as read-only reference data.
-- Edit custom identity, slug, category, generation, growth rate, types, abilities, passive, dimensions, capture data, friendship, gender ratio, and classification flags.
-- Edit all six base stats with synchronized sliders and exact numeric inputs.
-- View a live base-stat total (BST).
-- Autosave changes to the portable project folder with stale-revision protection.
-- Use a dark navy interface with blue, red, and purple status accents.
-- Run entirely on `127.0.0.1`; there are no accounts, cloud services, telemetry, or remote-access features.
+Double-click `Launch.bat` from this `Tool` folder.
 
-Official species are never cloned into a new project and cannot be edited. They are references only.
-
-## Local Studio Launcher
-
-Requirements:
-
-- Windows 10 or newer
-- Node.js 20 or newer
-
-Double-click `Launch.bat` or `SimpleLaunch.bat`. The launcher:
+The launcher:
 
 1. verifies Node.js 20 or newer;
-2. installs local dependencies when `node_modules` is missing;
-3. builds the production UI;
-4. starts the companion service on an available loopback port; and
+2. installs local npm dependencies when needed;
+3. builds the React application;
+4. starts the loopback-only Node companion; and
 5. opens the studio in the default browser.
 
-Closing the launcher window stops the local service.
+The companion binds only to `127.0.0.1`, serves the production bundle, owns portable project files, opens Windows folder pickers, validates imported assets, analyzes selected game checkouts, and runs delivery transactions.
 
-## Development
+For development:
 
 ```powershell
 npm ci
 npm run dev
 ```
 
-`npm run dev` starts the Node companion watcher on `127.0.0.1:43123` and the Vite UI together. Vite proxies `/api` to the companion while rewriting the local development origin to the companion origin.
+## Portable projects
 
-Useful commands:
-
-```powershell
-npm test
-npm run build
-npm run check:service
-npm run check-installer
-```
-
-## Portable Evolution-Line Projects
-
-Choose **New Evolution Line**, enter a project name, and select a parent folder. The studio creates:
+Choose **New Evolution Line**, enter a name, and select a parent folder. Each project is self-contained:
 
 ```text
-Emberline/
+My Evolution Line/
 ├── project.json
 ├── assets/
 └── .studio/
     ├── autosaves/
-    ├── operation-logs/
-    └── validation-cache.json
+    └── delivery/
 ```
 
-`project.json` is authoritative. `.studio/` contains rebuildable history and tool state. Projects can be copied or moved as folders and reopened from the dashboard.
+`project.json` contains stable project/stage IDs, complete authoring data, encounter policy, target bindings, and revision metadata. Autosave writes atomically through the local companion.
 
-Repository guarantees include:
+## Authoring workflows
 
-- complete import-shape validation;
-- canonical project identity and stale-revision checks;
-- atomic flushed JSON writes;
-- autosave-before-canonical ordering;
-- safe Windows folder containment;
-- junction, realpath, and case-alias serialization; and
-- independent writes across different projects.
+### Build
 
-## Editor workflow
+Each custom stage supports:
 
-The editor contains:
+- name, normalized internal slug, category, generation, and growth rate;
+- one or two types;
+- up to three abilities and a passive;
+- dimensions, friendship, capture rate, gender ratio, and classification flags;
+- six synchronized base-stat sliders and exact inputs with live BST;
+- level-up, TM, and egg moves; and
+- alternate forms with independent type, ability, passive, asset variant, starter visibility, change item, and stat overrides.
 
-- a header with project and autosave state;
-- a searchable official Pokédex on the left;
-- a persistent custom evolution-stage strip;
-- Build, Evolution, Assets, Encounters, and Review tabs; and
-- a dense responsive editing canvas.
+### Evolution
 
-The **Build** tab is functional in this phase. Evolution, Assets, Encounters, and Review are visible roadmap surfaces and clearly identify the later subsystem that will activate them.
+Create branching evolution edges between custom stages. Supported authoring requirements are level, item, friendship, time of day, known move, and custom package-only notes.
 
-## Runtime architecture
+Review rejects cycles, missing stages, duplicate edges, incomplete requirements, and target features the selected checkout cannot install safely.
+
+### Assets
+
+Import project-owned assets:
+
+- sprites and icons: PNG or WebP;
+- cries: OGG, WAV, MP3, or M4A; and
+- variant metadata: JSON objects.
+
+Imports are limited to 8 MB, stored under the project `assets/` directory, hashed with SHA-256, and validated by file signature. PNG dimensions must be between 1 and 4096 pixels. Delivery rechecks paths and hashes before copying anything.
+
+### Encounters
+
+Custom stages can be placed into named biome pools with weight and level ranges.
+
+Selecting an official Pokémon in the read-only Pokédex enables:
+
+- **Keep** — leave official references unchanged;
+- **Suppress** — disable declarative encounter references while preserving the species ID; or
+- **Replace** — substitute a selected custom stage in matching declarative tables.
+
+Unrecognized encounter layouts are reported and left unchanged rather than guessed.
+
+### Review and target binding
+
+Choose **Bind PokéRogue checkout** and select any local source checkout. The companion records:
+
+- source-layout adapter;
+- package or Git revision;
+- species registry and current highest ID;
+- collision-free IDs for every custom stage;
+- encounter, egg-move, sprite, icon, cry, form, form-change, and evolution-condition capabilities;
+- a target fingerprint; and
+- warnings for missing or unfamiliar anchors.
+
+Recognized modern and legacy registry shapes are supported. Unknown layouts are rejected. Portable authoring data remains preserved even when a particular checkout cannot install every feature; Review blocks unsafe delivery and identifies the incompatible fields.
+
+## Transactional delivery
+
+The Review tab provides:
+
+- **Preflight plan** — validates the project and checkout, generates a target-specific manifest, and runs the installer with no writes;
+- **Install** — requires a passing preflight and journals every edited or copied file;
+- **Update** — validates the existing journal, snapshots the installed mod, replaces it, and restores the previous installed transaction if replacement fails;
+- **Uninstall / rollback** — restores the exact original source and asset files; and
+- **Export package** — creates a portable `.pokerogue-mod-package.json` with the project, manifest, and verified embedded assets.
+
+Transaction journals live inside the selected checkout:
 
 ```text
-Windows launcher
-      │
-      ▼
-Node companion on 127.0.0.1
-      ├── JSON project API
-      ├── Windows folder picker
-      ├── atomic project repository
-      └── production static-file server
-              │
-              ▼
-        React browser UI
+.pokerogue-mod-studio/mods/<mod-id>/
+├── journal.json
+└── backups/
 ```
 
-The service accepts mutation requests only from its exact serialized loopback origin or from origin-less local desktop clients. Static files are served only after canonical containment and opened-file identity checks.
+Source blocks inserted by the adapter are bracketed with `MOD-STUDIO BEGIN/END` ownership markers.
 
-## Phase roadmap
+## Install a portable package manually
 
-The approved product is divided into four independently verifiable phases:
+Drag either a current delivery manifest or a `.pokerogue-mod-package.json` onto `Install-Mod.bat`.
 
-1. **Foundation and Blank-Line Editor — implemented here.**
-2. **Authoring Depth and Review** — evolution graph, moves, forms, uploaded assets, encounter policies, and complete review.
-3. **Target Discovery and Binding** — arbitrary PokéRogue checkout scanning, fingerprints, capability discovery, and target ID allocation.
-4. **Transactional Delivery** — install, update, rebuild, rollback, uninstall, and portable package workflows.
+The wrapper runs a dry-run first and asks before applying changes. Package assets are decoded into an isolated temporary folder, checked against their SHA-256 hashes, and passed to the same journaled installer.
 
-The existing legacy installer remains available for compatibility, but it is not yet connected to the new portable-project UI. The new editor deliberately does not claim that placeholder tabs can install a project.
+Command-line equivalent:
 
-## Data sources and generated files
+```powershell
+node pokerogue-mod-package-installer.cjs `
+  --input C:\Mods\emberline.pokerogue-mod-package.json `
+  --project C:\Games\rogue-offline `
+  --dry-run
 
-- `public/pokemon_data.json` is the official read-only roster used by the UI.
-- `dev.html` is the Vite entry.
-- `dist/` is generated by `npm run build`.
-- root `index.html` and `pokemon_data.json` are regenerated by `postbuild.js` for legacy compatibility and should not be hand-edited.
+node pokerogue-mod-package-installer.cjs `
+  --input C:\Mods\emberline.pokerogue-mod-package.json `
+  --project C:\Games\rogue-offline
+```
 
-## Safety and scope
+To uninstall:
 
-- Windows only for this release.
-- Local, offline, single-user workflow.
-- No edits to official species definitions from the editor.
-- No automatic media conversion.
-- No guessed writes into an unfamiliar PokéRogue checkout.
-- The original downloaded ZIP is not modified by this repository workflow.
+```powershell
+node pokerogue-mod-installer.cjs `
+  --project C:\Games\rogue-offline `
+  --uninstall emberline
+```
+
+## Safety boundaries
+
+- Official species IDs `1–1025` cannot be assigned to custom stages.
+- Existing numeric and enum-name collisions stop delivery.
+- Mutation API requests with a supplied foreign Origin are rejected.
+- Static files are contained by canonical path and opened-file identity checks.
+- Asset uploads cannot escape the portable project.
+- Missing target anchors stop the operation.
+- Preflight performs no writes.
+- Install and uninstall are journaled.
+- Failed installs roll back automatically.
+- Failed updates restore the previously installed transaction.
+- Package assets are hash-verified before installation.
+- Unsupported capabilities remain Review errors rather than speculative edits.
+
+## Verification
+
+Run the complete local verification from this folder:
+
+```powershell
+npm ci
+npm test
+npm run build
+npm run check:service
+npm run check-installer
+git diff --check
+```
+
+The repository workflow `.github/workflows/mod-studio-verify.yml` performs the same checks on Windows and smoke-tests the production localhost service.
+
+See `BUILD_REPORT.md` for completion evidence and verification scope.
