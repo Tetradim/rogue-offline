@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { addBlankStage, removeStage } from '../../../shared/project-schema.js'
+import { BuildTab } from './BuildTab.jsx'
 import { EvolutionStageStrip } from './EvolutionStageStrip.jsx'
 import { OfficialPokedex } from './OfficialPokedex.jsx'
 
@@ -107,11 +108,7 @@ export function EditorPage({
           </div>
           <section className="editor-canvas" role="tabpanel">
             {activeTab === 'build' ? (
-              <div className="editor-empty-state">
-                <span className="panel-kicker">Custom stage {project.stages.indexOf(activeStage) + 1}</span>
-                <h1>{activeStage.name}</h1>
-                <p>The Build sheet is ready for identity, battle data, and synchronized base-stat controls.</p>
-              </div>
+              <BuildTab project={project} stage={activeStage} onChange={onChange} />
             ) : (
               <div className="editor-empty-state future-panel">
                 <span className="panel-kicker">Planned workflow</span>
