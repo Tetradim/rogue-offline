@@ -146,6 +146,13 @@ function sendError(response, request, error, onError) {
   sendJson(response, statusCode, { error: statusCode >= 500 ? 'Internal service error.' : error.message }, { head: request.method === 'HEAD' })
 }
 
+function emptyFileTransaction() {
+  return {
+    commit: async () => {},
+    rollback: async () => {},
+  }
+}
+
 async function compensateMetadataCommit(repository, projectDir, originalProject, savedPayload, transaction, commitError) {
   try {
     await transaction.rollback()
@@ -175,14 +182,36 @@ export function createApp({
   onError = () => {},
 }) {
   async function uploadAsset(body) {
-    const transaction = await assetRepository.save(body.projectDir, body.stageId, body.kind, body.file)
+    const stage = body.project.stages?.find(candidate => candidate.stageId === body.stageId)
+    if (!stage) throw httpError('Asset stage does not exist in the submitted project.', 409)
+    const previousAsset = stage.assets?.find(asset => asset.kind === body.kind)
+    const previousTransaction = previousAsset
+      ? await assetRepository.quarantine(body.projectDir, previousAsset.relativePath)
+      : emptyFileTransaction()
+    let transaction
+    try {
+      transaction = await assetRepository.save(body.projectDir, body.stageId, body.kind, body.file)
+    } catch (error) {
+      await previousTransaction.rollback().catch(() => {})
+      throw error
+    }
+
+    let saved
     try {
       const nextProject = addStageAsset(body.project, body.stageId, transaction.asset)
-      const saved = await repository.save(body.projectDir, nextProject)
+      saved = await repository.save(body.projectDir, nextProject)
+    } catch (error) {
+      await transaction.rollback().catch(() => {})
+      await previousTransaction.rollback().catch(() => {})
+      throw error
+    }
+
+    try {
+      await previousTransaction.commit()
       return { ...saved, asset: transaction.asset }
     } catch (error) {
       await transaction.rollback().catch(() => {})
-      throw error
+      return compensateMetadataCommit(repository, body.projectDir, body.project, saved, previousTransaction, error)
     }
   }
 
