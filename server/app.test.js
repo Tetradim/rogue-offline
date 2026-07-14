@@ -413,15 +413,31 @@ describe('local companion API', () => {
   })
 
   it.each([
+    'https://127.0.0.1:43123/',
     'https://127.0.0.1:43123/path',
     'https://user@127.0.0.1:43123',
     'https://127.0.0.1:43123?x=1',
     'https://127.0.0.1:43123#x',
     'ftp://127.0.0.1:43123',
+    ' https://127.0.0.1:43123',
+    'https://127.0.0.1:43123 ',
   ])('rejects a non-origin-only Origin value: %s', origin => {
     expect(mutationOriginAllowed({
       headers: { host: '127.0.0.1:43123', origin },
     })).toBe(false)
+  })
+
+  it('returns 403 for a matching-host Origin with a trailing slash', async () => {
+    const selectFolder = vi.fn(async () => 'C:\\Mods')
+    const { server } = await startApp({ selectFolder })
+
+    const response = await jsonRequest(server, 'POST', '/api/dialog/folder', {}, {
+      origin: `https://${serverHost(server)}/`,
+    })
+
+    expect(response.statusCode).toBe(403)
+    expect(response.json).toEqual({ error: 'Origin does not match this local service.' })
+    expect(selectFolder).not.toHaveBeenCalled()
   })
 
   it('invokes static serving only for non-API GET and HEAD requests', async () => {

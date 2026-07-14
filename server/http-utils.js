@@ -107,7 +107,7 @@ export function mutationOriginAllowed(request) {
       && parsedOrigin.pathname === '/'
       && parsedOrigin.search === ''
       && parsedOrigin.hash === ''
-      && (origin === parsedOrigin.origin || origin === `${parsedOrigin.origin}/`)
+      && origin === parsedOrigin.origin
     )
     return (
       isHttpOrigin
