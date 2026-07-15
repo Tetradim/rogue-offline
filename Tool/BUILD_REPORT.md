@@ -64,6 +64,15 @@ The hardened installer now provides:
 - Exported project snapshots remove machine-local target bindings.
 - Manual manifest/package installation performs isolated target compilation before the real installer runs.
 
+## Launcher consolidation
+
+The repository now exposes two Windows launchers:
+
+- `Launch-Updating.bat` downloads only changed files from the latest `main` `Tool/` tree, verifies each Git blob, applies replacements with backups, removes obsolete managed files, and rolls back a failed update before launching the unchanged local copy.
+- `Launch-Offline.bat` performs no update check and starts only the currently installed local copy.
+
+The obsolete `Launch.bat`, `Launch.bat.ps1`, `LauncherWithUpdater.bat`, `SimpleLaunch.bat`, `Updater.ps1`, `UpdaterOnly.bat`, and `update_js.py` files were removed. Package installation, uninstallation, and standalone postbuild wrappers remain separate utilities.
+
 ## Automated coverage
 
 The Windows workflow runs:
@@ -98,7 +107,8 @@ The regression suite includes:
 - rollback conflict refusal after later edits;
 - interrupted-write recovery and live operation locking;
 - junction and transaction-state link rejection;
-- UI saved-revision gates; and
+- UI saved-revision gates;
+- updating/offline launcher structure and embedded Windows PowerShell parsing; and
 - production build and localhost serving.
 
 ## Release gate
