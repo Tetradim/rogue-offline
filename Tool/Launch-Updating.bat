@@ -48,19 +48,20 @@ $repoOwner = 'Tetradim'
 $repoName = 'rogue-offline'
 $branch = 'main'
 $headers = @{ 'User-Agent' = 'PokeRogue-Mod-Studio-Updater' }
-$toolRoot = [IO.Path]::GetFullPath($ToolPath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+$toolRoot = [IO.Path]::GetFullPath($ToolPath).TrimEnd([char[]]'\/')
 $versionFile = Join-Path $toolRoot '.launcher-version'
 $manifestFile = Join-Path $toolRoot '.launcher-update-manifest.json'
+$utf8NoBom = New-Object Text.UTF8Encoding($false)
 
 function Normalize-RelativePath([string]$RelativePath) {
     if ([string]::IsNullOrWhiteSpace($RelativePath) -or [IO.Path]::IsPathRooted($RelativePath)) {
         throw "Unsafe updater path: $RelativePath"
     }
-    $parts = $RelativePath.Replace('/', [IO.Path]::DirectorySeparatorChar).Split([IO.Path]::DirectorySeparatorChar)
-    if ($parts | Where-Object { $_ -eq '..' -or $_ -eq '' }) {
+    $parts = $RelativePath -split '[\\/]'
+    if ($parts | Where-Object { [string]::IsNullOrWhiteSpace($_) -or $_ -eq '.' -or $_ -eq '..' }) {
         throw "Unsafe updater path: $RelativePath"
     }
-    return ($parts -join [IO.Path]::DirectorySeparatorChar)
+    return [string]::Join([IO.Path]::DirectorySeparatorChar, $parts)
 }
 
 function Resolve-ToolPath([string]$RelativePath) {
@@ -78,20 +79,32 @@ function Write-AtomicText([string]$Path, [string]$Value) {
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
     $temporary = "$Path.$PID.$([Guid]::NewGuid().ToString('N')).tmp"
     try {
-        [IO.File]::WriteAllText($temporary, $Value, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($temporary, $Value, $utf8NoBom)
         Move-Item -LiteralPath $temporary -Destination $Path -Force
     } finally {
         Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
     }
 }
 
+function Get-GitBlobSha([string]$Path) {
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $prefix = [Text.Encoding]::ASCII.GetBytes("blob $($bytes.Length)`0")
+    $payload = New-Object byte[] ($prefix.Length + $bytes.Length)
+    [Buffer]::BlockCopy($prefix, 0, $payload, 0, $prefix.Length)
+    [Buffer]::BlockCopy($bytes, 0, $payload, $prefix.Length, $bytes.Length)
+    $algorithm = [Security.Cryptography.SHA1]::Create()
+    try {
+        return (($algorithm.ComputeHash($payload) | ForEach-Object { $_.ToString('x2') }) -join '')
+    } finally {
+        $algorithm.Dispose()
+    }
+}
+
 Write-Host '[UPDATE] Checking GitHub main...' -ForegroundColor Cyan
 try {
-    $latest = Invoke-RestMethod \
-        -Uri "https://api.github.com/repos/$repoOwner/$repoName/commits/$branch" \
-        -Headers $headers \
-        -TimeoutSec 15
+    $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/$repoOwner/$repoName/commits/$branch" -Headers $headers -TimeoutSec 15
     $latestSha = [string]$latest.sha
+    $rootTreeSha = [string]$latest.commit.tree.sha
 } catch {
     Write-Host "[WARN] GitHub could not be reached: $($_.Exception.Message)" -ForegroundColor Yellow
     Write-Host '[INFO] Continuing with the installed local version.' -ForegroundColor Gray
@@ -110,10 +123,9 @@ if ($currentSha -eq $latestSha) {
 }
 
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("pokerogue-mod-studio-update-" + [Guid]::NewGuid().ToString('N'))
-$archiveFile = Join-Path $tempRoot 'repository.zip'
-$extractRoot = Join-Path $tempRoot 'extracted'
+$stagingRoot = Join-Path $tempRoot 'staging'
 $backupRoot = Join-Path $tempRoot 'backup'
-$records = [Collections.Generic.List[object]]::new()
+$records = New-Object 'System.Collections.Generic.List[object]'
 $recorded = @{}
 
 function Backup-Destination([string]$RelativePath) {
@@ -152,34 +164,50 @@ function Install-File([string]$SourcePath, [string]$RelativePath) {
 }
 
 try {
-    New-Item -ItemType Directory -Path $extractRoot, $backupRoot -Force | Out-Null
-    Write-Host "[UPDATE] Downloading $repoOwner/$repoName $branch..." -ForegroundColor Cyan
-    Invoke-WebRequest \
-        -Uri "https://github.com/$repoOwner/$repoName/archive/refs/heads/$branch.zip" \
-        -OutFile $archiveFile \
-        -UseBasicParsing \
-        -Headers $headers \
-        -TimeoutSec 120
-    Expand-Archive -LiteralPath $archiveFile -DestinationPath $extractRoot -Force
+    New-Item -ItemType Directory -Path $stagingRoot, $backupRoot -Force | Out-Null
 
-    $repositoryRoot = Get-ChildItem -LiteralPath $extractRoot -Directory | Select-Object -First 1
-    if (-not $repositoryRoot) { throw 'The downloaded repository archive was empty.' }
-    $sourceRoot = Join-Path $repositoryRoot.FullName 'Tool'
-    foreach ($required in @('package.json', 'server\index.js', 'Launch-Updating.bat', 'Launch-Offline.bat')) {
-        if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $required) -PathType Leaf)) {
-            throw "The downloaded Tool/ tree is incomplete: $required is missing."
-        }
-    }
+    $rootTree = Invoke-RestMethod -Uri "https://api.github.com/repos/$repoOwner/$repoName/git/trees/$rootTreeSha" -Headers $headers -TimeoutSec 30
+    $toolEntry = @($rootTree.tree) | Where-Object { $_.path -eq 'Tool' -and $_.type -eq 'tree' } | Select-Object -First 1
+    if (-not $toolEntry) { throw 'GitHub main does not contain a Tool/ directory.' }
 
-    $sourceFiles = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -Force | ForEach-Object {
-        $relative = [IO.Path]::GetRelativePath($sourceRoot, $_.FullName)
-        [pscustomobject]@{ RelativePath = Normalize-RelativePath $relative; FullName = $_.FullName }
-    } | Where-Object {
-        $_.RelativePath -notin @('.launcher-version', '.launcher-update-manifest.json', '.launcher-deps.sha256')
-    }
+    $toolTree = Invoke-RestMethod -Uri "https://api.github.com/repos/$repoOwner/$repoName/git/trees/$($toolEntry.sha)?recursive=1" -Headers $headers -TimeoutSec 30
+    if ($toolTree.truncated) { throw 'GitHub returned a truncated Tool/ file list.' }
+
+    $entries = @($toolTree.tree) | Where-Object { $_.type -eq 'blob' }
+    if (-not $entries.Count) { throw 'GitHub returned an empty Tool/ file list.' }
 
     $sourceSet = @{}
-    foreach ($file in $sourceFiles) { $sourceSet[$file.RelativePath] = $true }
+    $filesToInstall = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($entry in $entries) {
+        if ($entry.mode -notin @('100644', '100755')) {
+            throw "Unsupported linked or special repository entry: Tool/$($entry.path)"
+        }
+        $relative = Normalize-RelativePath ([string]$entry.path)
+        if ($relative -in @('.launcher-version', '.launcher-update-manifest.json', '.launcher-deps.sha256')) { continue }
+        $sourceSet[$relative] = $true
+
+        $destination = Resolve-ToolPath $relative
+        if ((Test-Path -LiteralPath $destination -PathType Leaf) -and ((Get-GitBlobSha $destination) -eq [string]$entry.sha)) {
+            continue
+        }
+
+        $staged = Join-Path $stagingRoot $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $staged) -Force | Out-Null
+        $encodedPath = (($entry.path -split '/') | ForEach-Object { [Uri]::EscapeDataString($_) }) -join '/'
+        $rawUrl = "https://raw.githubusercontent.com/$repoOwner/$repoName/$latestSha/Tool/$encodedPath"
+        Invoke-WebRequest -Uri $rawUrl -OutFile $staged -UseBasicParsing -Headers $headers -TimeoutSec 60
+        if ((Get-GitBlobSha $staged) -ne [string]$entry.sha) {
+            throw "Downloaded file failed Git blob verification: Tool/$($entry.path)"
+        }
+        $filesToInstall.Add([pscustomobject]@{ RelativePath = $relative; FullName = $staged })
+    }
+
+    foreach ($required in @('package.json', 'server\index.js', 'Launch-Updating.bat', 'Launch-Offline.bat')) {
+        $safeRequired = Normalize-RelativePath $required
+        if (-not $sourceSet.ContainsKey($safeRequired)) {
+            throw "The GitHub Tool/ tree is incomplete: $required is missing."
+        }
+    }
 
     $previousManaged = @()
     if (Test-Path -LiteralPath $manifestFile) {
@@ -202,8 +230,8 @@ try {
         -not $sourceSet.ContainsKey($_)
     } | Sort-Object -Unique
 
-    Write-Host "[UPDATE] Installing $($sourceFiles.Count) files..." -ForegroundColor Cyan
-    foreach ($file in $sourceFiles) {
+    Write-Host "[UPDATE] Installing $($filesToInstall.Count) changed files..." -ForegroundColor Cyan
+    foreach ($file in $filesToInstall) {
         Install-File $file.FullName $file.RelativePath
     }
 
@@ -217,8 +245,9 @@ try {
 
     Backup-Destination '.launcher-update-manifest.json'
     Backup-Destination '.launcher-version'
-    $managed = @($sourceFiles.RelativePath | Sort-Object -Unique)
-    Write-AtomicText $manifestFile (($managed | ConvertTo-Json) + [Environment]::NewLine)
+    $managed = @($sourceSet.Keys | Sort-Object -Unique)
+    $manifestJson = ConvertTo-Json -InputObject $managed
+    Write-AtomicText $manifestFile ($manifestJson + [Environment]::NewLine)
     Write-AtomicText $versionFile ($latestSha + [Environment]::NewLine)
 
     Write-Host "[OK] Updated to $($latestSha.Substring(0, 8))." -ForegroundColor Green
