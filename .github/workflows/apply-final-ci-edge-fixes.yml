@@ -1,0 +1,97 @@
+name: Apply final CI edge fixes
+
+on:
+  push:
+    branches: [fix/release-hardening]
+    paths:
+      - .github/workflows/apply-final-ci-edge-fixes.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/release-hardening
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Patch Windows path and Git status handling
+        shell: python
+        run: |
+          from pathlib import Path
+
+          guard = Path('Tool/installer-runtime-guard.cjs')
+          text = guard.read_text(encoding='utf-8')
+          text = text.replace(
+            "function validateContainedPath(root, relative, label, { mustExist = false } = {}) {\n",
+            "function nearestExistingParent(candidate) {\n"
+            "  let current = path.dirname(candidate)\n"
+            "  while (!fs.existsSync(current)) {\n"
+            "    const parent = path.dirname(current)\n"
+            "    if (parent === current) throw new Error(`Could not resolve an existing parent for ${candidate}.`)\n"
+            "    current = parent\n"
+            "  }\n"
+            "  return fs.realpathSync(current)\n"
+            "}\n\n"
+            "function validateContainedPath(root, relative, label, { mustExist = false } = {}) {\n"
+          )
+          text = text.replace(
+            "  const parent = fs.realpathSync(path.dirname(candidate))\n",
+            "  const parent = nearestExistingParent(candidate)\n"
+          )
+          text = text.replace(
+            "function scanForLinks(root, directory) {\n  if (!fs.existsSync(directory)) return\n",
+            "function scanForLinks(root, directory) {\n"
+            "  if (!fs.existsSync(directory)) return\n"
+            "  if (directory !== root) {\n"
+            "    const metadata = fs.lstatSync(directory)\n"
+            "    const canonical = fs.realpathSync(directory)\n"
+            "    if (metadata.isSymbolicLink() || path.resolve(canonical).toLowerCase() !== path.resolve(directory).toLowerCase()) {\n"
+            "      throw new Error(`Refusing target link or junction: ${path.relative(root, directory)}`)\n"
+            "    }\n"
+            "  }\n"
+          )
+          text = text.replace(
+            "  if (fs.existsSync(mods)) {\n    for (const owner of fs.readdirSync(mods)) {\n      const file = path.join(mods, owner, 'journal.json')\n",
+            "  if (fs.existsSync(mods)) {\n"
+            "    validateContainedPath(root, path.relative(root, mods), 'mods state directory', { mustExist: true })\n"
+            "    for (const owner of fs.readdirSync(mods)) {\n"
+            "      validateContainedPath(root, path.relative(root, path.join(mods, owner)), 'mod owner directory', { mustExist: true })\n"
+            "      const file = path.join(mods, owner, 'journal.json')\n"
+          )
+          text = text.replace(
+            "  if (fs.existsSync(updates)) {\n    for (const owner of fs.readdirSync(updates)) {\n      const file = path.join(updates, owner, 'state.json')\n",
+            "  if (fs.existsSync(updates)) {\n"
+            "    validateContainedPath(root, path.relative(root, updates), 'updates state directory', { mustExist: true })\n"
+            "    for (const owner of fs.readdirSync(updates)) {\n"
+            "      validateContainedPath(root, path.relative(root, path.join(updates, owner)), 'update owner directory', { mustExist: true })\n"
+            "      const file = path.join(updates, owner, 'state.json')\n"
+          )
+          guard.write_text(text, encoding='utf-8', newline='\n')
+
+          discovery = Path('Tool/server/target-discovery.js')
+          text = discovery.read_text(encoding='utf-8')
+          text = text.replace("'--untracked-files=no'", "'--untracked-files=all'")
+          discovery.write_text(text, encoding='utf-8', newline='\n')
+      - name: Verify focused regressions
+        shell: pwsh
+        run: |
+          Set-Location Tool
+          npm ci
+          npx vitest run server/installer-runtime-guard.test.js server/runtime-guard-prepared-destination.test.js server/target-untracked-source.test.js
+      - name: Commit fixes
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Tool/installer-runtime-guard.cjs Tool/server/target-discovery.js
+          if (-not (git diff --cached --quiet)) {
+            git commit -m "fix: close final Windows path and Git status gaps"
+            git push origin HEAD:fix/release-hardening
+          }

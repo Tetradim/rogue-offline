@@ -18,7 +18,10 @@ export default function App() {
 
   useEffect(() => {
     if (!session.dirty) return undefined
-    const warnBeforeUnload = event => { event.preventDefault(); event.returnValue = '' }
+    const warnBeforeUnload = event => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
     window.addEventListener('beforeunload', warnBeforeUnload)
     return () => window.removeEventListener('beforeunload', warnBeforeUnload)
   }, [session.dirty])
@@ -43,6 +46,7 @@ export default function App() {
     pokemonLoading={pokemonState.loading}
     pokemonError={pokemonState.error}
     onChange={project => dispatch({ type: 'draft-changed', project })}
+    onServerSaved={payload => dispatch({ type: 'saved', payload })}
     onClose={closeProject}
   />
 }

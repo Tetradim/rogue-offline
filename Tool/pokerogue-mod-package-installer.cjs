@@ -7,6 +7,9 @@ const os = require('node:os')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
 
+const MAX_ASSET_BYTES = 8 * 1024 * 1024
+const MAX_PACKAGE_ASSET_BYTES = 64 * 1024 * 1024
+
 function parseArgs(argv) {
   const options = { dryRun: false, force: false }
   for (let index = 0; index < argv.length; index += 1) {
@@ -16,6 +19,7 @@ function parseArgs(argv) {
     else if (argument === '--dry-run') options.dryRun = true
     else if (argument === '--force') options.force = true
     else if (argument === '--help' || argument === '-h') options.help = true
+    else throw new Error(`Unknown argument: ${argument}`)
   }
   return options
 }
@@ -26,11 +30,7 @@ function sha256(data) {
 
 function isInside(root, candidate) {
   const relative = path.relative(root, candidate)
-  return relative === '' || (
-    relative !== '..'
-    && !relative.startsWith(`..${path.sep}`)
-    && !path.isAbsolute(relative)
-  )
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
 function readJson(file) {
@@ -42,57 +42,67 @@ function readJson(file) {
 }
 
 function decodeAsset(asset) {
-  if (typeof asset.dataBase64 !== 'string' || !asset.dataBase64.length) {
-    throw new Error(`Package asset has no data: ${asset.fileName || asset.relativePath || 'unnamed asset'}`)
-  }
+  if (typeof asset.dataBase64 !== 'string' || !asset.dataBase64.length) throw new Error(`Package asset has no data: ${asset.fileName || asset.relativePath || 'unnamed asset'}`)
   const normalized = asset.dataBase64.replace(/\s+/g, '')
   const data = Buffer.from(normalized, 'base64')
-  if (!data.length || data.toString('base64').replace(/=+$/g, '') !== normalized.replace(/=+$/g, '')) {
-    throw new Error(`Package asset is not valid base64: ${asset.fileName || asset.relativePath}`)
-  }
+  if (!data.length || data.toString('base64').replace(/=+$/g, '') !== normalized.replace(/=+$/g, '')) throw new Error(`Package asset is not valid base64: ${asset.fileName || asset.relativePath}`)
+  if (data.length > MAX_ASSET_BYTES) throw new Error(`Package asset exceeds the ${MAX_ASSET_BYTES / 1024 / 1024} MB limit: ${asset.fileName || asset.relativePath}`)
   const hash = sha256(data)
-  if (asset.sha256 && hash !== asset.sha256) {
-    throw new Error(`Package asset hash mismatch: ${asset.fileName || asset.relativePath}`)
-  }
+  if (!asset.sha256 || hash !== asset.sha256) throw new Error(`Package asset hash mismatch: ${asset.fileName || asset.relativePath}`)
   return data
+}
+
+function manifestAssetPaths(manifest) {
+  const paths = new Set()
+  for (const species of manifest.customSpecies || []) {
+    for (const asset of species.assets || []) {
+      const relative = String(asset.relativePath || '').replaceAll('\\', '/')
+      if (!relative.startsWith('assets/') || relative.split('/').includes('..')) throw new Error(`Manifest asset path is invalid: ${relative}`)
+      if (paths.has(relative)) throw new Error(`Manifest asset path is duplicated: ${relative}`)
+      paths.add(relative)
+    }
+  }
+  return paths
 }
 
 function materializeInput(inputFile) {
   const input = readJson(inputFile)
-  if (input.format === 'pokerogue-mod-studio') {
-    return { manifestPath: path.resolve(inputFile), cleanup: () => {} }
+  if (input.format === 'pokerogue-mod-studio') return { manifestPath: path.resolve(inputFile), cleanup: () => {} }
+  if (input.format !== 'pokerogue-mod-package' || Number(input.schemaVersion) !== 1) throw new Error('Input must be a current PokéRogue Mod Studio manifest or package.')
+  if (!input.manifest || input.manifest.format !== 'pokerogue-mod-studio' || Number(input.manifest.schemaVersion) !== 3) throw new Error('Portable package does not contain a current delivery manifest.')
+  if (!Array.isArray(input.assets)) throw new Error('Portable package assets must be an array.')
+
+  const requiredPaths = manifestAssetPaths(input.manifest)
+  const packagePaths = new Set()
+  const decoded = []
+  let totalBytes = 0
+  for (const asset of input.assets) {
+    const relativePath = String(asset?.relativePath || '').replaceAll('\\', '/')
+    if (!relativePath.startsWith('assets/') || relativePath.split('/').includes('..')) throw new Error(`Package asset path is outside assets/: ${relativePath}`)
+    if (packagePaths.has(relativePath)) throw new Error(`Package asset path is duplicated: ${relativePath}`)
+    packagePaths.add(relativePath)
+    const data = decodeAsset(asset)
+    totalBytes += data.length
+    if (totalBytes > MAX_PACKAGE_ASSET_BYTES) throw new Error(`Package assets exceed the ${MAX_PACKAGE_ASSET_BYTES / 1024 / 1024} MB combined limit.`)
+    decoded.push({ relativePath, data })
   }
-  if (input.format !== 'pokerogue-mod-package' || Number(input.schemaVersion) !== 1) {
-    throw new Error('Input must be a current PokéRogue Mod Studio manifest or package.')
-  }
-  if (!input.manifest || input.manifest.format !== 'pokerogue-mod-studio') {
-    throw new Error('Portable package does not contain a valid delivery manifest.')
-  }
+  for (const required of requiredPaths) if (!packagePaths.has(required)) throw new Error(`Portable package is missing manifest asset: ${required}`)
+  for (const included of packagePaths) if (!requiredPaths.has(included)) throw new Error(`Portable package contains an unreferenced asset: ${included}`)
 
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pokerogue-mod-package-'))
   const assetsRoot = path.join(temporaryRoot, 'assets')
   fs.mkdirSync(assetsRoot, { recursive: true })
   try {
-    for (const asset of input.assets || []) {
-      const relativePath = String(asset.relativePath || '').replaceAll('\\', '/')
-      if (!relativePath.startsWith('assets/')) {
-        throw new Error(`Package asset path is outside assets/: ${relativePath}`)
-      }
-      const target = path.resolve(temporaryRoot, relativePath)
-      if (!isInside(assetsRoot, target) || target === assetsRoot) {
-        throw new Error(`Package asset path escapes the temporary project: ${relativePath}`)
-      }
-      const data = decodeAsset(asset)
+    for (const asset of decoded) {
+      const target = path.resolve(temporaryRoot, asset.relativePath)
+      if (!isInside(assetsRoot, target) || target === assetsRoot) throw new Error(`Package asset path escapes the temporary project: ${asset.relativePath}`)
       fs.mkdirSync(path.dirname(target), { recursive: true })
-      fs.writeFileSync(target, data, { flag: 'wx' })
+      fs.writeFileSync(target, asset.data, { flag: 'wx' })
     }
     const manifest = { ...input.manifest, sourceRoot: temporaryRoot }
     const manifestPath = path.join(temporaryRoot, 'manifest.json')
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8')
-    return {
-      manifestPath,
-      cleanup: () => fs.rmSync(temporaryRoot, { recursive: true, force: true }),
-    }
+    return { manifestPath, cleanup: () => fs.rmSync(temporaryRoot, { recursive: true, force: true }) }
   } catch (error) {
     fs.rmSync(temporaryRoot, { recursive: true, force: true })
     throw error
@@ -104,17 +114,10 @@ function runInstaller({ input, project, dryRun = false, force = false }) {
   const materialized = materializeInput(path.resolve(input))
   try {
     const installer = path.join(__dirname, 'pokerogue-mod-installer.cjs')
-    const args = [
-      installer,
-      '--manifest', materialized.manifestPath,
-      '--project', path.resolve(project),
-    ]
+    const args = [installer, '--manifest', materialized.manifestPath, '--project', path.resolve(project)]
     if (dryRun) args.push('--dry-run')
     if (force) args.push('--force')
-    const result = spawnSync(process.execPath, args, {
-      stdio: 'inherit',
-      windowsHide: true,
-    })
+    const result = spawnSync(process.execPath, args, { stdio: 'inherit', windowsHide: true })
     if (result.error) throw result.error
     return Number.isInteger(result.status) ? result.status : 1
   } finally {
@@ -137,5 +140,5 @@ function main() {
   }
 }
 
-module.exports = { decodeAsset, materializeInput, parseArgs, runInstaller }
+module.exports = { decodeAsset, manifestAssetPaths, materializeInput, parseArgs, runInstaller }
 if (require.main === module) main()

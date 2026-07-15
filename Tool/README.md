@@ -1,22 +1,28 @@
 # PokéRogue Mod Studio
 
-A Windows-first, local/offline authoring and delivery tool for portable PokéRogue evolution-line mods.
+A Windows-first, local/offline authoring and delivery tool for portable custom PokéRogue evolution-line mods.
 
-The studio creates blank custom species rather than cloning official species. Official Pokémon remain read-only references and can be kept, suppressed from encounter systems, or replaced by a selected custom stage without deleting their IDs.
+The studio creates blank custom species. Official Pokémon remain read-only references and can be left unchanged, suppressed from supported wild pools, or replaced by a selected custom stage without deleting their official IDs.
+
+## Requirements
+
+- Windows 10 or newer.
+- Node.js 20 or newer.
+- For installation: a recognized modern PokéRogue Git checkout with dependencies already installed and a working `typecheck` or `build` npm script.
+
+The target checkout must either be clean or contain only a valid, unchanged Mod Studio installation owned by the project being updated. Unrelated tracked edits block delivery.
 
 ## Launch the studio
 
-Double-click `Launch.bat` from this `Tool` folder.
-
-The launcher:
+Double-click `Launch.bat` from this `Tool` folder. It:
 
 1. verifies Node.js 20 or newer;
-2. installs local npm dependencies when needed;
+2. installs this tool's npm dependencies when needed;
 3. builds the React application;
 4. starts the loopback-only Node companion; and
 5. opens the studio in the default browser.
 
-The companion binds only to `127.0.0.1`, serves the production bundle, owns portable project files, opens Windows folder pickers, validates imported assets, analyzes selected game checkouts, and runs delivery transactions.
+The companion binds only to `127.0.0.1`. There are no accounts, cloud services, telemetry, or remote-access features.
 
 For development:
 
@@ -27,7 +33,7 @@ npm run dev
 
 ## Portable projects
 
-Choose **New Evolution Line**, enter a name, and select a parent folder. Each project is self-contained:
+Choose **New Evolution Line**, enter a name, and select a parent folder:
 
 ```text
 My Evolution Line/
@@ -35,94 +41,134 @@ My Evolution Line/
 ├── assets/
 └── .studio/
     ├── autosaves/
+    ├── asset-transactions/
     └── delivery/
 ```
 
-`project.json` contains stable project/stage IDs, complete authoring data, encounter policy, target bindings, and revision metadata. Autosave writes atomically through the local companion.
+`project.json` is authoritative. The companion validates the complete nested project shape, serializes saves per canonical project path, writes autosave history first, and atomically replaces the canonical project file.
+
+Project and stage IDs remain stable when display names change. Deleting a stage also removes its evolution edges, encounter placements, replacement policies, target ID allocations, and stage asset directory through a compensated server-side transaction.
 
 ## Authoring workflows
 
 ### Build
 
-Each custom stage supports:
+Each stage supports:
 
-- name, normalized internal slug, category, generation, and growth rate;
+- name, normalized slug, category, generation, and growth rate;
 - one or two types;
 - up to three abilities and a passive;
-- dimensions, friendship, capture rate, gender ratio, and classification flags;
-- six synchronized base-stat sliders and exact inputs with live BST;
-- level-up, TM, and egg moves; and
-- alternate forms with independent type, ability, passive, asset variant, starter visibility, change item, and stat overrides.
+- dimensions, friendship, capture rate, male percentage, and explicit genderless state;
+- legendary, mythical, and starter flags;
+- six base stats from 1 through 255 with a live BST;
+- level-up and TM moves;
+- up to four egg moves; and
+- alternate forms with type, ability, passive, item-change, starter-visibility, asset-variant, and stat overrides.
+
+Enum-style values are checked against the selected checkout before delivery. Unknown abilities, moves, types, growth rates, items, times of day, and biomes are blocking Review errors.
 
 ### Evolution
 
-Create branching evolution edges between custom stages. Supported authoring requirements are level, item, friendship, time of day, known move, and custom package-only notes.
+Create branching edges between custom stages. Supported automatic delivery requirements are:
 
-Review rejects cycles, missing stages, duplicate edges, incomplete requirements, and target features the selected checkout cannot install safely.
+- level;
+- evolution item;
+- friendship;
+- time of day; and
+- known move.
+
+Custom prose requirements remain portable notes and cannot be installed automatically. Review rejects missing stages, duplicate edges, incomplete requirements, and cycles.
 
 ### Assets
 
-Import project-owned assets:
+A stage may assign one file per asset role:
 
-- sprites and icons: PNG or WebP;
-- cries: OGG, WAV, MP3, or M4A; and
-- variant metadata: JSON objects.
+- sprite or icon: PNG or WebP;
+- cry: OGG, WAV, MP3, or M4A; and
+- variant metadata: a JSON object.
 
-Imports are limited to 8 MB, stored under the project `assets/` directory, hashed with SHA-256, and validated by file signature. PNG dimensions must be between 1 and 4096 pixels. Delivery rechecks paths and hashes before copying anything.
+Each imported asset is limited to 8 MB. The companion validates its actual signature, PNG dimensions, size, canonical containment, and SHA-256 hash. Replacing, removing, or deleting assets commits the file operation and project revision together or compensates both on failure.
+
+Portable packages are limited to 64 MB of embedded assets in total. Package export removes target bindings and other machine-local paths.
 
 ### Encounters
 
-Custom stages can be placed into named biome pools with weight and level ranges.
+The supported encounter adapter edits only recognized, simple biome arrays whose entries are `SpeciesId` values.
 
-Selecting an official Pokémon in the read-only Pokédex enables:
+You can:
 
-- **Keep** — leave official references unchanged;
-- **Suppress** — disable declarative encounter references while preserving the species ID; or
-- **Replace** — substitute a selected custom stage in matching declarative tables.
+- add a custom species to one exact biome pool;
+- suppress supported official wild-pool references; or
+- replace those references with one custom stage.
 
-Unrecognized encounter layouts are reported and left unchanged rather than guessed.
+Weights, level ranges, trainer tables, bosses, starters, eggs, and special rewards are not guessed or claimed by this adapter. A requested biome or official reference must match exactly; zero or ambiguous matches block delivery.
 
 ### Review and target binding
 
-Choose **Bind PokéRogue checkout** and select any local source checkout. The companion records:
+Choose **Bind PokéRogue checkout** and select a local checkout. The companion detects only the verified modern `SpeciesDataMapConfig` / `PokemonSpecies` layout. Legacy or unfamiliar registries are refused.
 
-- source-layout adapter;
-- package or Git revision;
-- species registry and current highest ID;
-- collision-free IDs for every custom stage;
-- encounter, egg-move, sprite, icon, cry, form, form-change, and evolution-condition capabilities;
-- a target fingerprint; and
-- warnings for missing or unfamiliar anchors.
+Analysis records:
 
-Recognized modern and legacy registry shapes are supported. Unknown layouts are rejected. Portable authoring data remains preserved even when a particular checkout cannot install every feature; Review blocks unsafe delivery and identifies the incompatible fields.
+- Git revision and dirty state;
+- package version and package manager;
+- a target fingerprint;
+- recognized source paths;
+- enum catalogs;
+- exact simple encounter adapters;
+- asset destinations;
+- form and evolution-condition capabilities;
+- collision-free custom species IDs; and
+- the target build or type-check script.
+
+Target identity and allocated IDs remain stable across a valid Mod Studio-owned installation because analysis verifies its committed journal and fingerprints the original backups.
 
 ## Transactional delivery
 
-The Review tab provides:
+Delivery buttons are enabled only when the displayed project revision has been saved successfully.
 
-- **Preflight plan** — validates the project and checkout, generates a target-specific manifest, and runs the installer with no writes;
-- **Install** — requires a passing preflight and journals every edited or copied file;
-- **Update** — validates the existing journal, snapshots the installed mod, replaces it, and restores the previous installed transaction if replacement fails;
-- **Uninstall / rollback** — restores the exact original source and asset files; and
-- **Export package** — creates a portable `.pokerogue-mod-package.json` with the project, manifest, and verified embedded assets.
+### Preflight
 
-Transaction journals live inside the selected checkout:
+Preflight performs all of the following without writing to the selected checkout:
 
-```text
-.pokerogue-mod-studio/mods/<mod-id>/
-├── journal.json
-└── backups/
-```
+1. rereads the exact saved project revision;
+2. reanalyzes the checkout and validates enum symbols;
+3. generates a target-specific manifest;
+4. runs the source patch planner in dry-run mode;
+5. creates a detached temporary Git worktree at the target revision;
+6. applies the manifest inside that isolated worktree; and
+7. runs the target's `typecheck` or `build` script using the installed dependency tree.
 
-Source blocks inserted by the adapter are bracketed with `MOD-STUDIO BEGIN/END` ownership markers.
+Immediately before a real apply, the companion reanalyzes the selected checkout and rejects any fingerprint or validation change.
 
-## Install a portable package manually
+### Install and update
 
-Drag either a current delivery manifest or a `.pokerogue-mod-package.json` onto `Install-Mod.bat`.
+The installer:
 
-The wrapper runs a dry-run first and asks before applying changes. Package assets are decoded into an isolated temporary folder, checked against their SHA-256 hashes, and passed to the same journaled installer.
+- acquires an exclusive checkout operation lock;
+- rejects symbolic links and junctions in edited source/public/asset paths;
+- validates all journal and update paths canonically;
+- writes a durable write-ahead journal before modifying files;
+- records `prepared`, `applying`, `applied`, and `committed` states;
+- writes and restores files through flushed temporary replacements;
+- backs up each destination once;
+- rejects duplicate destination paths; and
+- automatically recovers incomplete transactions on the next operation.
 
-Command-line equivalent:
+Update validates the existing installed hashes, snapshots the previous installed state and journal, plans the replacement from the original backups, then installs the new revision. Any failed replacement restores the previous installed mod and journal.
+
+### Uninstall and conflicts
+
+Uninstall restores original source and assets only when every current file still matches the journal's recorded installed hash. Later user edits or another mod's changes produce a rollback conflict instead of being overwritten.
+
+Mod IDs, journal paths, backups, update snapshots, source paths, and asset paths are validated against traversal and canonical escape.
+
+## Portable package installation
+
+Drag a current manifest or `.pokerogue-mod-package.json` onto `Install-Mod.bat`.
+
+The wrapper first materializes and verifies the exact embedded asset set, then runs the same isolated Git-worktree build preflight used by the Studio. The real installer is not invoked when isolated verification fails.
+
+Command-line form:
 
 ```powershell
 node pokerogue-mod-package-installer.cjs `
@@ -135,7 +181,7 @@ node pokerogue-mod-package-installer.cjs `
   --project C:\Games\rogue-offline
 ```
 
-To uninstall:
+For an installed mod:
 
 ```powershell
 node pokerogue-mod-installer.cjs `
@@ -143,24 +189,9 @@ node pokerogue-mod-installer.cjs `
   --uninstall emberline
 ```
 
-## Safety boundaries
-
-- Official species IDs `1–1025` cannot be assigned to custom stages.
-- Existing numeric and enum-name collisions stop delivery.
-- Mutation API requests with a supplied foreign Origin are rejected.
-- Static files are contained by canonical path and opened-file identity checks.
-- Asset uploads cannot escape the portable project.
-- Missing target anchors stop the operation.
-- Preflight performs no writes.
-- Install and uninstall are journaled.
-- Failed installs roll back automatically.
-- Failed updates restore the previously installed transaction.
-- Package assets are hash-verified before installation.
-- Unsupported capabilities remain Review errors rather than speculative edits.
-
 ## Verification
 
-Run the complete local verification from this folder:
+Run from this folder:
 
 ```powershell
 npm ci
@@ -171,6 +202,6 @@ npm run check-installer
 git diff --check
 ```
 
-The repository workflow `.github/workflows/mod-studio-verify.yml` performs the same checks on Windows and smoke-tests the production localhost service.
+The repository workflow `.github/workflows/mod-studio-verify.yml` performs those checks on Windows and smoke-tests the built production companion on `127.0.0.1`.
 
-See `BUILD_REPORT.md` for completion evidence and verification scope.
+See `BUILD_REPORT.md` for verification scope and release evidence.

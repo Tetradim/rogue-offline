@@ -1,0 +1,88 @@
+name: Apply final hardening path fixes
+
+on:
+  push:
+    branches:
+      - fix/release-hardening
+    paths:
+      - '.github/workflows/hardening-path-followup.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tighten path and Git-state checks
+        shell: python
+        run: |
+          from pathlib import Path
+
+          guard = Path('Tool/installer-runtime-guard.cjs')
+          value = guard.read_text()
+          marker = "function validateContainedPath(\n"
+          helper = """function nearestExistingParent(candidate) {
+            let current = path.dirname(candidate)
+            while (!fs.existsSync(current)) {
+              const parent = path.dirname(current)
+              if (parent === current) {
+                throw new Error(`Could not resolve a contained parent for ${candidate}.`)
+              }
+              current = parent
+            }
+            return fs.realpathSync(current)
+          }
+
+          """
+          if helper.strip() not in value:
+              if marker not in value:
+                  raise SystemExit('validateContainedPath marker missing')
+              value = value.replace(marker, helper + marker, 1)
+          old = "  const parent = fs.realpathSync(path.dirname(candidate))\n"
+          new = "  const parent = nearestExistingParent(candidate)\n"
+          if old not in value:
+              raise SystemExit('direct parent resolution was not found')
+          guard.write_text(value.replace(old, new, 1))
+
+          discovery = Path('Tool/server/target-discovery.js')
+          value = discovery.read_text()
+          old = "      execFileAsync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=no'], {\n"
+          new = "      execFileAsync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=all'], {\n"
+          if old not in value:
+              raise SystemExit('git status command was not found')
+          value = value.replace(old, new, 1)
+          old = """    return {
+      available: true,
+      revision: revision.trim(),
+      clean: !statusOutput.trim(),
+      changedPaths: parseStatusPaths(statusOutput),
+    }
+"""
+          new = """    const changedPaths = parseStatusPaths(statusOutput).filter(candidate => (
+      candidate !== '.pokerogue-mod-studio'
+      && !candidate.startsWith('.pokerogue-mod-studio/')
+    ))
+    return {
+      available: true,
+      revision: revision.trim(),
+      clean: changedPaths.length === 0,
+      changedPaths,
+    }
+"""
+          if old not in value:
+              raise SystemExit('git state return block was not found')
+          discovery.write_text(value.replace(old, new, 1))
+
+          Path('.github/workflows/hardening-path-followup.yml').unlink()
+      - name: Commit patch and remove helper workflow
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix: validate untracked source and prepared destinations"
+          git push origin HEAD:fix/release-hardening
