@@ -1,12 +1,11 @@
 name: Inventory launcher scripts
 
 on:
-  push:
+  pull_request:
     branches:
-      - chore/consolidate-launchers
+      - main
     paths:
       - .github/workflows/inventory-launchers.yml
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: chore/consolidate-launchers
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
       - name: List tracked launcher and shell scripts
         shell: pwsh
