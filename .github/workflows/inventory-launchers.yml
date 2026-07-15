@@ -1,4 +1,4 @@
-name: Inventory launcher scripts
+name: Finalize launcher consolidation
 
 on:
   pull_request:
@@ -8,44 +8,128 @@ on:
       - .github/workflows/inventory-launchers.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  inventory:
+  finalize:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: chore/consolidate-launchers
           fetch-depth: 0
-      - name: List tracked launchers and references
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Tool/package-lock.json
+
+      - name: Consolidate launchers and documentation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          root = Path('.')
+          readme = root / 'Tool' / 'README.md'
+          value = readme.read_text(encoding='utf-8')
+          old = """## Launch the studio
+
+          Double-click `Launch.bat` from this `Tool` folder. It:
+
+          1. verifies Node.js 20 or newer;
+          2. installs this tool's npm dependencies when needed;
+          3. builds the React application;
+          4. starts the loopback-only Node companion; and
+          5. opens the studio in the default browser.
+
+          The companion binds only to `127.0.0.1`. There are no accounts, cloud services, telemetry, or remote-access features.
+          """
+          new = """## Launch the studio
+
+          Choose one launcher from this `Tool` folder:
+
+          - **`Launch-Updating.bat`** checks the latest `main` commit, downloads only changed files from the repository's `Tool/` subtree, verifies every download against its Git blob SHA, applies changes with backups, removes files that disappeared from a previously managed update, and rolls back a failed replacement before starting the studio.
+          - **`Launch-Offline.bat`** performs no update check and never contacts GitHub. It starts the currently installed local copy.
+
+          Both launchers verify Node.js 20 or newer, synchronize npm dependencies when `package-lock.json` changes, build the React application, start the loopback-only Node companion, and open the studio in the default browser. The updating launcher falls back to the unchanged local copy when GitHub is unavailable.
+
+          Updater state is stored in `.launcher-version` and `.launcher-update-manifest.json`. `node_modules` and files that were never managed by the updater are preserved.
+
+          The companion binds only to `127.0.0.1`. There are no accounts, cloud services, telemetry, or remote-access features.
+          """
+          if old not in value:
+              raise SystemExit('README launcher section did not match the expected source text.')
+          readme.write_text(value.replace(old, new, 1), encoding='utf-8', newline='\n')
+
+          postbuild = root / 'Tool' / 'postbuild.js'
+          value = postbuild.read_text(encoding='utf-8')
+          old = """// Regenerates Tool/index.html — the file Launch.bat/SimpleLaunch.bat
+          // actually opens — from the fresh build output every time `npm run build`
+          // runs. This exists specifically so the dev-entry (dev.html) and the
+          // launcher-entry (index.html) can never accidentally get swapped again:
+          """
+          new = """// Regenerates Tool/index.html — the entry served by both Windows launchers —
+          // from the fresh build output every time `npm run build` runs. This exists
+          // specifically so the dev-entry (dev.html) and launcher-entry (index.html)
+          // can never accidentally get swapped again:
+          """
+          if old not in value:
+              raise SystemExit('postbuild launcher comment did not match the expected source text.')
+          postbuild.write_text(value.replace(old, new, 1), encoding='utf-8', newline='\n')
+
+          obsolete = [
+              'Tool/Launch.bat',
+              'Tool/Launch.bat.ps1',
+              'Tool/LauncherWithUpdater.bat',
+              'Tool/SimpleLaunch.bat',
+              'Tool/Updater.ps1',
+              'Tool/UpdaterOnly.bat',
+              'Tool/update_js.py',
+          ]
+          for name in obsolete:
+              path = root / name
+              if not path.is_file():
+                  raise SystemExit(f'Expected obsolete launcher file is missing: {name}')
+              path.unlink()
+
+      - name: Remove temporary workflows
         shell: pwsh
         run: |
-          $all = git ls-files
-          $scripts = $all | Where-Object {
-            $_ -match '(?i)\.(bat|cmd|ps1)$' -or
-            $_ -match '(?i)(launch|launcher|updater|update|start|run)'
-          } | Sort-Object -Unique
-          @('=== TRACKED CANDIDATES ===') + $scripts + @('', '=== REFERENCES ===') |
-            Set-Content -Path launcher-inventory.txt -Encoding utf8
-          $patterns = @(
-            'Launch.bat',
-            'Launch.bat.ps1',
-            'LauncherWithUpdater.bat',
-            'SimpleLaunch.bat',
-            'Updater.ps1',
-            'UpdaterOnly.bat',
-            'update_js.py'
-          )
-          foreach ($pattern in $patterns) {
-            Add-Content launcher-inventory.txt "--- $pattern ---"
-            $matches = git grep -n -I -F -- $pattern 2>$null
-            if ($LASTEXITCODE -eq 0) { $matches | Add-Content launcher-inventory.txt }
-            else { Add-Content launcher-inventory.txt '(no references)' }
-          }
-          Get-Content launcher-inventory.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: launcher-inventory
-          path: launcher-inventory.txt
-          if-no-files-found: error
+          Remove-Item .github/workflows/inventory-launchers.yml
+          Remove-Item .github/workflows/finalize-launchers.yml
+
+      - name: Install dependencies
+        working-directory: Tool
+        run: npm ci
+
+      - name: Run tests
+        working-directory: Tool
+        run: npm test
+
+      - name: Build production UI
+        working-directory: Tool
+        run: npm run build
+
+      - name: Check service syntax
+        working-directory: Tool
+        run: npm run check:service
+
+      - name: Check installer syntax
+        working-directory: Tool
+        run: npm run check-installer
+
+      - name: Validate changed files
+        shell: pwsh
+        run: git diff --check
+
+      - name: Commit and push launcher consolidation
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat: consolidate updating and offline launchers"
+          git push origin HEAD:chore/consolidate-launchers
