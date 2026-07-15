@@ -105,8 +105,23 @@ jobs:
         run: npm ci
 
       - name: Run tests
+        id: tests
+        continue-on-error: true
         working-directory: Tool
-        run: npm test
+        run: npm test -- --reporter=json --outputFile=vitest-results.json
+
+      - name: Upload Vitest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-vitest-results
+          path: Tool/vitest-results.json
+          if-no-files-found: error
+
+      - name: Enforce test result
+        if: steps.tests.outcome == 'failure'
+        shell: pwsh
+        run: throw 'Vitest failed. See launcher-vitest-results.'
 
       - name: Build production UI
         working-directory: Tool
