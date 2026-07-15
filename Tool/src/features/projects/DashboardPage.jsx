@@ -4,18 +4,20 @@ export function DashboardPage({ api, onOpen }) {
   const [mode, setMode] = useState(null)
   const [name, setName] = useState('')
   const [folder, setFolder] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [busyAction, setBusyAction] = useState(null)
   const [error, setError] = useState('')
+  const busy = busyAction !== null
 
-  async function run(action) {
-    setBusy(true)
+  async function run(actionName, action) {
+    if (busy) return
+    setBusyAction(actionName)
     setError('')
     try {
       await action()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(false)
+      setBusyAction(null)
     }
   }
 
@@ -32,14 +34,14 @@ export function DashboardPage({ api, onOpen }) {
   }
 
   function chooseParentFolder() {
-    return run(async () => {
+    return run('choose-parent', async () => {
       const selected = await api.chooseFolder('Choose project parent folder')
       if (selected) setFolder(selected)
     })
   }
 
   function openProject() {
-    return run(async () => {
+    return run('open-project', async () => {
       const projectDir = await api.chooseFolder('Choose a PokéRogue Mod Studio project folder')
       if (!projectDir) return
       onOpen(await api.openProject(projectDir))
@@ -50,10 +52,14 @@ export function DashboardPage({ api, onOpen }) {
     event.preventDefault()
     const projectName = name.trim()
     if (!projectName || !folder) return
-    return run(async () => {
+    return run('create-project', async () => {
       onOpen(await api.createProject(folder, projectName))
     })
   }
+
+  const choosingParent = busyAction === 'choose-parent'
+  const openingProject = busyAction === 'open-project'
+  const creatingProject = busyAction === 'create-project'
 
   return (
     <main className="dashboard-shell">
@@ -73,8 +79,14 @@ export function DashboardPage({ api, onOpen }) {
           <button type="button" className="button button-primary" onClick={beginCreate} disabled={busy}>
             <span aria-hidden="true">＋</span> New Evolution Line
           </button>
-          <button type="button" className="button button-secondary" onClick={openProject} disabled={busy}>
-            Open Project Folder
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={openProject}
+            disabled={busy}
+            aria-busy={openingProject}
+          >
+            {openingProject ? 'Waiting for Windows folder picker…' : 'Open Project Folder'}
           </button>
         </div>
         <div className="dashboard-capabilities" aria-label="Current capabilities">
@@ -86,13 +98,13 @@ export function DashboardPage({ api, onOpen }) {
 
       {mode === 'create' && (
         <div className="dialog-backdrop" role="presentation">
-          <form className="dialog-card" onSubmit={createProject} aria-labelledby="create-project-title">
+          <form className="dialog-card" onSubmit={createProject} aria-labelledby="create-project-title" aria-busy={busy}>
             <div className="dialog-heading">
               <div>
                 <p className="eyebrow">Portable project</p>
                 <h2 id="create-project-title">Create blank evolution line</h2>
               </div>
-              <button type="button" className="icon-button" aria-label="Close create project dialog" onClick={cancelCreate}>×</button>
+              <button type="button" className="icon-button" aria-label="Close create project dialog" onClick={cancelCreate} disabled={busy}>×</button>
             </div>
             <label>
               <span>Project name</span>
@@ -102,16 +114,27 @@ export function DashboardPage({ api, onOpen }) {
               <span>Parent folder</span>
               <div className="folder-row">
                 <input value={folder} readOnly placeholder="Choose where the project folder will be created" />
-                <button type="button" className="button button-secondary" onClick={chooseParentFolder} disabled={busy}>
-                  Choose Parent Folder
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={chooseParentFolder}
+                  disabled={busy}
+                  aria-busy={choosingParent}
+                >
+                  {choosingParent ? 'Waiting for Windows folder picker…' : 'Choose Parent Folder'}
                 </button>
               </div>
             </label>
+            {choosingParent && (
+              <p className="folder-picker-status" role="status">
+                The Windows folder picker is open in front of this window. Choose a folder or select Cancel there.
+              </p>
+            )}
             {error && <p className="error-banner" role="alert">{error}</p>}
             <div className="dialog-actions">
               <button type="button" className="button button-ghost" onClick={cancelCreate} disabled={busy}>Cancel</button>
               <button className="button button-primary" disabled={busy || !name.trim() || !folder}>
-                {busy ? 'Creating…' : 'Create Project'}
+                {creatingProject ? 'Creating…' : 'Create Project'}
               </button>
             </div>
           </form>
