@@ -69,6 +69,17 @@
 .dialog-card label { display: grid; gap: 7px; margin: 18px 0; color: #cbd6ea; font-weight: 720; }
 .dialog-card label > span { font-size: 13px; }
 .folder-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; }
+.folder-row .button[aria-busy="true"], .dashboard-actions .button[aria-busy="true"] { cursor: progress; }
+.folder-picker-status {
+  margin: -4px 0 8px;
+  border: 1px solid rgba(86, 130, 210, .65);
+  border-radius: 8px;
+  background: rgba(25, 55, 104, .36);
+  color: #bfd4ff;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
 .dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
 .dashboard-error { width: min(820px, 100%); margin: 0; }
 .dashboard-footer { color: #667594; font-size: 12px; letter-spacing: .04em; }
