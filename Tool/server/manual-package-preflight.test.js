@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   projectFromManifest,
   runTargetPreflight,
-} from '../pokerogue-mod-target-preflight.mjs'
+} from './target-preflight-service.js'
 
 const require = createRequire(import.meta.url)
 const { runInstaller } = require('../pokerogue-mod-package-installer.cjs')
