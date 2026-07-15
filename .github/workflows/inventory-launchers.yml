@@ -139,6 +139,28 @@ jobs:
         working-directory: Tool
         run: npm run check-installer
 
+      - name: Normalize changed text files
+        shell: python
+        run: |
+          import subprocess
+          from pathlib import Path
+
+          suffixes = {'.bat', '.cjs', '.css', '.html', '.js', '.json', '.md', '.mjs', '.ps1', '.py', '.yaml', '.yml'}
+          names = subprocess.check_output(
+              ['git', 'diff', '--name-only', '--diff-filter=ACM'],
+              text=True,
+          ).splitlines()
+          for name in names:
+              path = Path(name)
+              if path.suffix.lower() not in suffixes or not path.is_file():
+                  continue
+              data = path.read_bytes()
+              if b'\0' in data:
+                  continue
+              text = data.decode('utf-8-sig')
+              lines = [line.rstrip(' \t') for line in text.splitlines()]
+              path.write_text('\n'.join(lines) + '\n', encoding='utf-8', newline='\n')
+
       - name: Validate changed files
         shell: pwsh
         run: git diff --check
