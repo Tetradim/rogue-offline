@@ -1,7 +1,7 @@
-// Regenerates Tool/index.html — the file Launch.bat/SimpleLaunch.bat
-// actually opens — from the fresh build output every time `npm run build`
-// runs. This exists specifically so the dev-entry (dev.html) and the
-// launcher-entry (index.html) can never accidentally get swapped again:
+// Regenerates Tool/index.html — the entry served by both Windows launchers —
+// from the fresh build output every time `npm run build` runs. This exists
+// specifically so the dev-entry (dev.html) and launcher-entry (index.html)
+// can never accidentally get swapped again:
 // index.html is now purely generated output, never hand-edited.
 import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'

@@ -34,12 +34,22 @@ function canonicalRoot(project) {
   return root
 }
 
+function nearestExistingParent(candidate) {
+  let current = path.dirname(candidate)
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current)
+    if (parent === current) throw new Error(`Could not resolve an existing parent for ${candidate}.`)
+    current = parent
+  }
+  return fs.realpathSync(current)
+}
+
 function validateContainedPath(root, relative, label, { mustExist = false } = {}) {
   const candidate = path.resolve(root, safeRelative(relative, label))
   if (!isInside(root, candidate) || candidate === root) {
     throw new Error(`Invalid ${label}: path escapes the checkout.`)
   }
-  const parent = fs.realpathSync(path.dirname(candidate))
+  const parent = nearestExistingParent(candidate)
   if (!isInside(root, parent)) throw new Error(`Invalid ${label}: parent escapes the checkout.`)
   if (!fs.existsSync(candidate)) {
     if (mustExist) throw new Error(`Required ${label} is missing: ${relative}`)
@@ -56,6 +66,13 @@ function validateContainedPath(root, relative, label, { mustExist = false } = {}
 
 function scanForLinks(root, directory) {
   if (!fs.existsSync(directory)) return
+  if (directory !== root) {
+    const metadata = fs.lstatSync(directory)
+    const canonical = fs.realpathSync(directory)
+    if (metadata.isSymbolicLink() || path.resolve(canonical).toLowerCase() !== path.resolve(directory).toLowerCase()) {
+      throw new Error(`Refusing target link or junction: ${path.relative(root, directory)}`)
+    }
+  }
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     if (SKIP_DIRECTORIES.has(entry.name) || entry.name === STATE_DIR) continue
     const full = path.join(directory, entry.name)
@@ -104,14 +121,18 @@ function validateUpdateState(root, file) {
 function validateTransactionState(root) {
   const mods = path.join(root, STATE_DIR, 'mods')
   if (fs.existsSync(mods)) {
+    validateContainedPath(root, path.relative(root, mods), 'mods state directory', { mustExist: true })
     for (const owner of fs.readdirSync(mods)) {
+      validateContainedPath(root, path.relative(root, path.join(mods, owner)), 'mod owner directory', { mustExist: true })
       const file = path.join(mods, owner, 'journal.json')
       if (fs.existsSync(file)) validateJournal(root, file)
     }
   }
   const updates = path.join(root, STATE_DIR, 'updates')
   if (fs.existsSync(updates)) {
+    validateContainedPath(root, path.relative(root, updates), 'updates state directory', { mustExist: true })
     for (const owner of fs.readdirSync(updates)) {
+      validateContainedPath(root, path.relative(root, path.join(updates, owner)), 'update owner directory', { mustExist: true })
       const file = path.join(updates, owner, 'state.json')
       if (fs.existsSync(file)) validateUpdateState(root, file)
     }

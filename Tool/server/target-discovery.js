@@ -278,16 +278,20 @@ async function readGitState(root) {
         encoding: 'utf8',
         windowsHide: true,
       }),
-      execFileAsync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=no'], {
+      execFileAsync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=all'], {
         encoding: 'utf8',
         windowsHide: true,
       }),
     ])
+    const changedPaths = parseStatusPaths(statusOutput).filter(candidate => (
+      candidate !== '.pokerogue-mod-studio'
+      && !candidate.startsWith('.pokerogue-mod-studio/')
+    ))
     return {
       available: true,
       revision: revision.trim(),
-      clean: !statusOutput.trim(),
-      changedPaths: parseStatusPaths(statusOutput),
+      clean: changedPaths.length === 0,
+      changedPaths,
     }
   } catch {
     return {

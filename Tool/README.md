@@ -14,13 +14,14 @@ The target checkout must either be clean or contain only a valid, unchanged Mod 
 
 ## Launch the studio
 
-Double-click `Launch.bat` from this `Tool` folder. It:
+Choose one launcher from this `Tool` folder:
 
-1. verifies Node.js 20 or newer;
-2. installs this tool's npm dependencies when needed;
-3. builds the React application;
-4. starts the loopback-only Node companion; and
-5. opens the studio in the default browser.
+- **`Launch-Updating.bat`** checks the latest `main` commit, downloads only changed files from the repository's `Tool/` subtree, verifies every download against its Git blob SHA, applies changes with backups, removes files that disappeared from a previously managed update, and rolls back a failed replacement before starting the studio.
+- **`Launch-Offline.bat`** performs no update check and never contacts GitHub. It starts the currently installed local copy.
+
+Both launchers verify Node.js 20 or newer, synchronize npm dependencies when `package-lock.json` changes, build the React application, start the loopback-only Node companion, and open the studio in the default browser. The updating launcher falls back to the unchanged local copy when GitHub is unavailable.
+
+Updater state is stored in `.launcher-version` and `.launcher-update-manifest.json`. `node_modules` and files that were never managed by the updater are preserved.
 
 The companion binds only to `127.0.0.1`. There are no accounts, cloud services, telemetry, or remote-access features.
 

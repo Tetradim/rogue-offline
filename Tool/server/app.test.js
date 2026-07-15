@@ -874,10 +874,11 @@ describe('Windows folder picker', () => {
     expect(calls).toHaveLength(1)
     const [command, args, options] = calls[0]
     expect(command).toBe('powershell.exe')
-    expect(args.slice(0, 3)).toEqual(['-NoProfile', '-STA', '-Command'])
-    expect(args[3]).toContain("$dialog.Description = 'Choose Trainer''s folder'")
-    expect(args[3]).toContain('$dialog.ShowNewFolderButton = $true')
-    expect(args[3]).toMatch(/DialogResult.*OK/)
+    expect(args.slice(0, 4)).toEqual(['-NoLogo', '-NoProfile', '-STA', '-Command'])
+    expect(args[4]).toContain("$dialog.Description = 'Choose Trainer''s folder'")
+    expect(args[4]).toContain('$dialog.ShowNewFolderButton = $true')
+    expect(args[4]).toContain('$dialog.ShowDialog($owner)')
+    expect(args[4]).toMatch(/DialogResult.*OK/)
     expect(options).toMatchObject({ windowsHide: true, encoding: 'utf8' })
   })
 
