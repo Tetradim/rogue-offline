@@ -94,11 +94,15 @@ jobs:
                   raise SystemExit(f'Expected obsolete launcher file is missing: {name}')
               path.unlink()
 
-      - name: Remove temporary workflows
+      - name: Repair existing Windows regressions
+        run: python Tool/scripts/repair-preexisting-windows-regressions.py
+
+      - name: Remove temporary workflows and repair script
         shell: pwsh
         run: |
           Remove-Item .github/workflows/inventory-launchers.yml
           Remove-Item .github/workflows/finalize-launchers.yml
+          Remove-Item Tool/scripts/repair-preexisting-windows-regressions.py
 
       - name: Install dependencies
         working-directory: Tool
