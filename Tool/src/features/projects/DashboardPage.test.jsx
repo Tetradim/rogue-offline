@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { DashboardPage } from './DashboardPage.jsx'
@@ -25,6 +25,28 @@ describe('DashboardPage', () => {
 
     expect(api.createProject).toHaveBeenCalledWith('C:\\Mods', 'Emberline')
     expect(onOpen).toHaveBeenCalledWith(payload)
+  })
+
+  it('shows a specific progress state while the native folder picker is open', async () => {
+    const user = userEvent.setup()
+    let resolveFolder
+    const api = {
+      chooseFolder: vi.fn().mockImplementation(() => new Promise(resolve => { resolveFolder = resolve })),
+      createProject: vi.fn(),
+      openProject: vi.fn(),
+    }
+
+    render(<DashboardPage api={api} onOpen={vi.fn()} />)
+    await user.click(screen.getByRole('button', { name: /new evolution line/i }))
+    await user.click(screen.getByRole('button', { name: /choose parent folder/i }))
+
+    expect(screen.getByRole('button', { name: /waiting for windows folder picker/i })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent(/folder picker is open in front/i)
+    expect(screen.getByRole('button', { name: /^create project$/i })).toBeDisabled()
+
+    resolveFolder('C:\\Mods')
+    await waitFor(() => expect(screen.getByDisplayValue('C:\\Mods')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /choose parent folder/i })).toBeEnabled()
   })
 
   it('opens a selected portable project folder', async () => {
