@@ -1,0 +1,36 @@
+name: Inventory launcher scripts
+
+on:
+  push:
+    branches:
+      - chore/consolidate-launchers
+    paths:
+      - .github/workflows/inventory-launchers.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chore/consolidate-launchers
+          fetch-depth: 0
+      - name: List tracked launcher and shell scripts
+        shell: pwsh
+        run: |
+          $all = git ls-files
+          $scripts = $all | Where-Object {
+            $_ -match '(?i)\.(bat|cmd|ps1)$' -or
+            $_ -match '(?i)(launch|launcher|updater|update|start|run)'
+          } | Sort-Object -Unique
+          $scripts | Set-Content -Path launcher-inventory.txt -Encoding utf8
+          Get-Content launcher-inventory.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-inventory
+          path: launcher-inventory.txt
+          if-no-files-found: error
