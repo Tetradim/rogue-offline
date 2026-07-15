@@ -1,7 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { analyzePokeRogueTarget } from './target-discovery.js'
 import { verifyTargetBuild } from './target-verifier.js'
+
+const toolRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 
 export function parseTargetPreflightArgs(argv) {
   const options = {}
@@ -71,12 +74,11 @@ export function projectFromManifest(manifest, targetDir) {
 export async function runTargetPreflight({
   manifestPath,
   targetDir,
-  installerPath,
+  installerPath = path.join(toolRoot, 'pokerogue-mod-installer.cjs'),
   analyzeTarget = analyzePokeRogueTarget,
   verifyTarget = verifyTargetBuild,
 } = {}) {
   if (!manifestPath || !targetDir) throw new Error('Both manifestPath and targetDir are required.')
-  if (!installerPath) throw new Error('installerPath is required for isolated target preflight.')
   const manifest = JSON.parse(await readFile(path.resolve(manifestPath), 'utf8'))
   if (manifest.format !== 'pokerogue-mod-studio' || Number(manifest.schemaVersion) !== 3) {
     throw new Error('Isolated preflight requires a current Mod Studio delivery manifest.')
