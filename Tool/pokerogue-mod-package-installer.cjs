@@ -109,17 +109,33 @@ function materializeInput(inputFile) {
   }
 }
 
-function runInstaller({ input, project, dryRun = false, force = false }) {
+function runChild(spawnProcess, execPath, args) {
+  const result = spawnProcess(execPath, args, { stdio: 'inherit', windowsHide: true })
+  if (result.error) throw result.error
+  return Number.isInteger(result.status) ? result.status : 1
+}
+
+function runInstaller(
+  { input, project, dryRun = false, force = false },
+  { spawnProcess = spawnSync, execPath = process.execPath } = {},
+) {
   if (!input || !project) throw new Error('Both --input and --project are required.')
   const materialized = materializeInput(path.resolve(input))
   try {
+    const resolvedProject = path.resolve(project)
+    const preflight = path.join(__dirname, 'pokerogue-mod-target-preflight.mjs')
+    const preflightStatus = runChild(spawnProcess, execPath, [
+      preflight,
+      '--manifest', materialized.manifestPath,
+      '--project', resolvedProject,
+    ])
+    if (preflightStatus !== 0) return preflightStatus
+
     const installer = path.join(__dirname, 'pokerogue-mod-installer.cjs')
-    const args = [installer, '--manifest', materialized.manifestPath, '--project', path.resolve(project)]
+    const args = [installer, '--manifest', materialized.manifestPath, '--project', resolvedProject]
     if (dryRun) args.push('--dry-run')
     if (force) args.push('--force')
-    const result = spawnSync(process.execPath, args, { stdio: 'inherit', windowsHide: true })
-    if (result.error) throw result.error
-    return Number.isInteger(result.status) ? result.status : 1
+    return runChild(spawnProcess, execPath, args)
   } finally {
     materialized.cleanup()
   }
