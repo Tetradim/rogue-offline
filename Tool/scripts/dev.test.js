@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { EventEmitter } from 'node:events'
-import { readFile } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
@@ -75,23 +75,37 @@ describe('development orchestration', () => {
     })
   })
 
-  it('uses Node launchers and preserves native failures', async () => {
-    const [powershell, launch, simpleLaunch] = await Promise.all([
-      readFile(path.join(rootDir, 'Launch.bat.ps1'), 'utf8'),
-      readFile(path.join(rootDir, 'Launch.bat'), 'utf8'),
-      readFile(path.join(rootDir, 'SimpleLaunch.bat'), 'utf8'),
+  it('uses exactly one updating launcher and one no-update launcher', async () => {
+    const [updating, offline] = await Promise.all([
+      readFile(path.join(rootDir, 'Launch-Updating.bat'), 'utf8'),
+      readFile(path.join(rootDir, 'Launch-Offline.bat'), 'utf8'),
     ])
 
-    expect(powershell).toMatch(/process\.versions\.node/)
-    expect(powershell).toMatch(/Node\.js 20 or newer/)
-    expect(powershell).toMatch(/npm run build/)
-    expect(powershell).toMatch(/node server\\index\.js --open/)
-    expect(powershell).not.toMatch(/HttpListener|python/i)
-    for (const wrapper of [launch, simpleLaunch]) {
-      expect(wrapper).toMatch(/Launch\.bat\.ps1/)
-      expect(wrapper).toMatch(/set "exitCode=%errorlevel%"/i)
-      expect(wrapper).toMatch(/exit \/b %exitCode%/i)
-      expect(wrapper).not.toMatch(/python|http\.server/i)
+    expect(offline).toMatch(/process\.versions\.node/)
+    expect(offline).toMatch(/Node\.js 20 or newer/)
+    expect(offline).toMatch(/npm\.cmd ci/)
+    expect(offline).toMatch(/npm\.cmd run build/)
+    expect(offline).toMatch(/node\.exe server\\index\.js --open/)
+    expect(offline).not.toMatch(/raw\.githubusercontent|api\.github\.com|http\.server|python/i)
+
+    expect(updating).toMatch(/api\.github\.com\/repos\/\$repoOwner\/\$repoName\/commits\/\$branch/)
+    expect(updating).toMatch(/git\/trees\/\$\(\$toolEntry\.sha\)\?recursive=1/)
+    expect(updating).toMatch(/raw\.githubusercontent\.com/)
+    expect(updating).toMatch(/Get-GitBlobSha/)
+    expect(updating).toMatch(/\[ROLLBACK\]/)
+    expect(updating).toMatch(/call "%~dp0Launch-Offline\.bat"/)
+    expect(updating).not.toMatch(/move-audio-to-tetradim|http\.server|python/i)
+
+    for (const obsolete of [
+      'Launch.bat',
+      'Launch.bat.ps1',
+      'LauncherWithUpdater.bat',
+      'SimpleLaunch.bat',
+      'Updater.ps1',
+      'UpdaterOnly.bat',
+      'update_js.py',
+    ]) {
+      await expect(access(path.join(rootDir, obsolete))).rejects.toMatchObject({ code: 'ENOENT' })
     }
   })
 })
