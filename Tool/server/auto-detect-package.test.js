@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { runTargetPreflight } from '../pokerogue-mod-target-preflight.mjs'
+import { runTargetPreflight } from './target-preflight-service.js'
 
 const require = createRequire(import.meta.url)
 const { validateManifest } = require('../installer-core.cjs')
