@@ -10,7 +10,7 @@
     "build": "vite build",
     "postbuild": "node postbuild.js",
     "preview": "vite preview",
-    "check:service": "node --check server/index.js && node --check server/app.js && node --check server/target-discovery.js && node --check server/target-verifier.js && node --check server/delivery-service.js",
+    "check:service": "node --check server/index.js && node --check server/app.js && node --check server/windows-dialog.js && node --check server/target-discovery.js && node --check server/target-verifier.js && node --check server/delivery-service.js",
     "check-installer": "node --check installer-core.cjs && node --check pokerogue-mod-installer.cjs && node --check pokerogue-mod-package-installer.cjs",
     "test": "vitest run",
     "test:watch": "vitest",
