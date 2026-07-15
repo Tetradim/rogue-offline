@@ -18,7 +18,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - name: List tracked launcher and shell scripts
+      - name: List tracked launchers and references
         shell: pwsh
         run: |
           $all = git ls-files
@@ -26,7 +26,23 @@ jobs:
             $_ -match '(?i)\.(bat|cmd|ps1)$' -or
             $_ -match '(?i)(launch|launcher|updater|update|start|run)'
           } | Sort-Object -Unique
-          $scripts | Set-Content -Path launcher-inventory.txt -Encoding utf8
+          @('=== TRACKED CANDIDATES ===') + $scripts + @('', '=== REFERENCES ===') |
+            Set-Content -Path launcher-inventory.txt -Encoding utf8
+          $patterns = @(
+            'Launch.bat',
+            'Launch.bat.ps1',
+            'LauncherWithUpdater.bat',
+            'SimpleLaunch.bat',
+            'Updater.ps1',
+            'UpdaterOnly.bat',
+            'update_js.py'
+          )
+          foreach ($pattern in $patterns) {
+            Add-Content launcher-inventory.txt "--- $pattern ---"
+            $matches = git grep -n -I -F -- $pattern 2>$null
+            if ($LASTEXITCODE -eq 0) { $matches | Add-Content launcher-inventory.txt }
+            else { Add-Content launcher-inventory.txt '(no references)' }
+          }
           Get-Content launcher-inventory.txt
       - uses: actions/upload-artifact@v4
         with:
