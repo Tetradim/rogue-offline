@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react'
 import { removeEvolutionEdge, upsertEvolutionEdge } from '../../../shared/project-authoring.js'
+import { EVOLUTION_ITEM_OPTIONS, MOVE_OPTIONS } from '../../options.generated.js'
+import { EnumInput } from './EnumInput.jsx'
+
+const TIME_OF_DAY_OPTIONS = ['DAWN', 'DAY', 'DUSK', 'NIGHT']
 
 function triggerSummary(edge) {
   const trigger = edge.trigger || {}
@@ -11,11 +15,32 @@ function triggerSummary(edge) {
   return trigger.description || 'Custom requirement'
 }
 
+function defaultValue(type) {
+  if (type === 'level') return '16'
+  if (type === 'friendship') return '220'
+  if (type === 'time') return 'DAY'
+  return ''
+}
+
+function RequirementValue({ type, value, onChange }) {
+  if (type === 'level') return <input aria-label="Requirement value" type="number" min="1" max="100" value={value} onChange={onChange} />
+  if (type === 'friendship') return <input aria-label="Requirement value" type="number" min="1" max="255" value={value} onChange={onChange} />
+  if (type === 'item') return <EnumInput aria-label="Requirement value" value={value} options={EVOLUTION_ITEM_OPTIONS} placeholder="FIRE_STONE" onChange={onChange} />
+  if (type === 'move') return <EnumInput aria-label="Requirement value" value={value} options={MOVE_OPTIONS} placeholder="ANCIENT_POWER" onChange={onChange} />
+  if (type === 'time') return <EnumInput aria-label="Requirement value" value={value} options={TIME_OF_DAY_OPTIONS} placeholder="DAY" onChange={onChange} />
+  return <input aria-label="Requirement value" value={value} placeholder="Describe the custom requirement" onChange={onChange} />
+}
+
 export function EvolutionTab({ project, activeStage, onChange }) {
   const otherStages = useMemo(() => project.stages.filter(stage => stage.stageId !== activeStage.stageId), [project.stages, activeStage.stageId])
   const [to, setTo] = useState(otherStages[0]?.stageId || '')
   const [type, setType] = useState('level')
   const [value, setValue] = useState('16')
+
+  function changeType(nextType) {
+    setType(nextType)
+    setValue(defaultValue(nextType))
+  }
 
   function addEdge(event) {
     event.preventDefault()
@@ -38,9 +63,9 @@ export function EvolutionTab({ project, activeStage, onChange }) {
         <div className="card-heading"><h2>Add evolution from {activeStage.name}</h2><span className="card-accent purple">Graph</span></div>
         <form className="evolution-form" onSubmit={addEdge}>
           <label>Target stage<select value={to} onChange={event => setTo(event.target.value)}><option value="">Choose stage</option>{otherStages.map(stage => <option value={stage.stageId} key={stage.stageId}>{stage.name}</option>)}</select></label>
-          <label>Requirement<select value={type} onChange={event => setType(event.target.value)}>{['level','item','friendship','time','move','custom'].map(option => <option value={option} key={option}>{option}</option>)}</select></label>
-          <label>Requirement value<input value={value} onChange={event => setValue(event.target.value)} placeholder={type === 'item' ? 'FIRE_STONE' : type === 'move' ? 'ANCIENT_POWER' : '16'} /></label>
-          <button className="button button-primary" disabled={!to}>Add evolution</button>
+          <label>Requirement<select value={type} onChange={event => changeType(event.target.value)}>{['level','item','friendship','time','move','custom'].map(option => <option value={option} key={option}>{option}</option>)}</select></label>
+          <label>Requirement value<RequirementValue type={type} value={value} onChange={event => setValue(event.target.value)} /></label>
+          <button className="button button-primary" disabled={!to || !String(value).trim()}>Add evolution</button>
         </form>
       </section>
       <div className="edge-list">
