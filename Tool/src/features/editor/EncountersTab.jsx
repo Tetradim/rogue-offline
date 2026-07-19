@@ -4,6 +4,8 @@ import {
   setOfficialEncounterPolicy,
   upsertEncounterPlacement,
 } from '../../../shared/project-authoring.js'
+import { BIOME_OPTIONS } from '../../options.generated.js'
+import { EnumInput } from './EnumInput.jsx'
 
 export function EncountersTab({ project, official, onChange }) {
   const [mode, setMode] = useState('suppress')
@@ -49,7 +51,7 @@ export function EncountersTab({ project, official, onChange }) {
           <div className="card-heading"><h2>Custom wild pool</h2><span className="card-accent blue">Exact adapter</span></div>
           <form className="placement-form" onSubmit={addPlacement}>
             <label>Stage<select value={stageId} onChange={event => setStageId(event.target.value)}>{project.stages.map(stage => <option value={stage.stageId} key={stage.stageId}>{stage.name}</option>)}</select></label>
-            <label>Biome ID<input value={biome} placeholder="PLAINS" onChange={event => setBiome(event.target.value)} /></label>
+            <label>Biome ID<EnumInput aria-label="Biome ID" value={biome} options={BIOME_OPTIONS} placeholder="PLAINS" onChange={event => setBiome(event.target.value)} /></label>
             <button className="button button-primary" disabled={!biome.trim()}>Add pool membership</button>
           </form>
           <div className="placement-list">
