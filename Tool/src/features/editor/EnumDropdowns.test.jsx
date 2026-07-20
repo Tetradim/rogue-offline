@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { addStageForm } from '../../../shared/project-authoring.js'
 import { addBlankStage, createBlankProject } from '../../../shared/project-schema.js'
+import { ABILITY_METADATA, MOVE_METADATA } from '../../enum-metadata.generated.js'
 import { BuildTab } from './BuildTab.jsx'
 import { EncountersTab } from './EncountersTab.jsx'
 import { EvolutionTab } from './EvolutionTab.jsx'
@@ -13,12 +14,24 @@ function inputByAriaLabel(label) {
   return input
 }
 
-function expectLinkedOption(input, expectedValue) {
+function linkedDatalist(input) {
   const listId = input.getAttribute('list')
   expect(listId).toBeTruthy()
   const datalist = document.getElementById(listId)
   expect(datalist).toBeInTheDocument()
+  return datalist
+}
+
+function expectLinkedOption(input, expectedValue) {
+  const datalist = linkedDatalist(input)
   expect(Array.from(datalist.options).map(option => option.value)).toContain(expectedValue)
+}
+
+function expectDescribedOption(input, expectedValue, metadata) {
+  const option = Array.from(linkedDatalist(input).options).find(candidate => candidate.value === expectedValue)
+  expect(option).toBeDefined()
+  expect(option.label).toContain(metadata[expectedValue].name)
+  expect(option.label).toContain(metadata[expectedValue].description)
 }
 
 describe('enum-backed editor dropdowns', () => {
@@ -39,6 +52,25 @@ describe('enum-backed editor dropdowns', () => {
     expectLinkedOption(inputByAriaLabel('Mega change item'), 'FIRE_STONE')
   })
 
+  it('shows descriptive labels and a visible explanation for selected passives and moves', async () => {
+    const user = userEvent.setup()
+    const project = createBlankProject({ name: 'Emberline' })
+    const stage = { ...project.stages[0], passive: 'BLAZE' }
+
+    render(<BuildTab project={project} stage={stage} onChange={vi.fn()} />)
+
+    const passive = inputByAriaLabel('Passive')
+    expectDescribedOption(passive, 'BLAZE', ABILITY_METADATA)
+    expect(screen.getByText(ABILITY_METADATA.BLAZE.description)).toBeInTheDocument()
+    expect(passive).toHaveAttribute('title', ABILITY_METADATA.BLAZE.description)
+
+    const move = inputByAriaLabel('Level-up move ID')
+    expectDescribedOption(move, 'EMBER', MOVE_METADATA)
+    await user.type(move, 'EMBER')
+    expect(screen.getByText(MOVE_METADATA.EMBER.description)).toBeInTheDocument()
+    expect(move).toHaveAttribute('title', MOVE_METADATA.EMBER.description)
+  })
+
   it('changes the evolution requirement control to the matching enum catalog', async () => {
     const user = userEvent.setup()
     const project = addBlankStage(createBlankProject({ name: 'Emberline' }))
@@ -49,7 +81,10 @@ describe('enum-backed editor dropdowns', () => {
     expectLinkedOption(inputByAriaLabel('Requirement value'), 'FIRE_STONE')
 
     await user.selectOptions(screen.getByLabelText(/^Requirement$/), 'move')
-    expectLinkedOption(inputByAriaLabel('Requirement value'), 'ANCIENT_POWER')
+    const move = inputByAriaLabel('Requirement value')
+    expectDescribedOption(move, 'ANCIENT_POWER', MOVE_METADATA)
+    await user.type(move, 'ANCIENT_POWER')
+    expect(screen.getByText(MOVE_METADATA.ANCIENT_POWER.description)).toBeInTheDocument()
 
     await user.selectOptions(screen.getByLabelText(/^Requirement$/), 'time')
     expectLinkedOption(inputByAriaLabel('Requirement value'), 'DAY')

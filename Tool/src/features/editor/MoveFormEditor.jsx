@@ -8,6 +8,7 @@ import {
   updateStageForm,
 } from '../../../shared/project-authoring.js'
 import { MAX_EGG_MOVES } from '../../../shared/project-schema.js'
+import { ABILITY_METADATA, MOVE_METADATA } from '../../enum-metadata.generated.js'
 import {
   ABILITY_OPTIONS,
   EVOLUTION_ITEM_OPTIONS,
@@ -47,7 +48,7 @@ function MoveList({ title, entries, kind, project, stage, onChange, limit = Infi
         {kind === 'levelUp' && (
           <label>Level<input aria-label="Move level" type="number" min="1" max="100" value={level} onChange={event => setLevel(event.target.value)} /></label>
         )}
-        <label>Move ID<EnumInput aria-label={`${title} move ID`} value={move} options={MOVE_OPTIONS} placeholder="EMBER" onChange={event => setMove(event.target.value)} /></label>
+        <label>Move ID<EnumInput aria-label={`${title} move ID`} value={move} options={MOVE_OPTIONS} metadata={MOVE_METADATA} placeholder="EMBER" onChange={event => setMove(event.target.value)} /></label>
         <button className="button button-secondary" disabled={!move.trim() || atLimit}>Add</button>
       </form>
       {atLimit && Number.isFinite(limit) && <p className="muted empty-copy">This target registry supports {limit} entries.</p>}
@@ -55,7 +56,7 @@ function MoveList({ title, entries, kind, project, stage, onChange, limit = Infi
         {entries.map((entry, index) => {
           const label = kind === 'levelUp' ? `Lv. ${entry.level} · ${entry.moveId}` : entry
           return (
-            <span className="data-pill" key={`${label}-${index}`}>
+            <span className="data-pill" key={`${label}-${index}`} title={MOVE_METADATA[kind === 'levelUp' ? entry.moveId : entry]?.description}>
               {label}
               <button type="button" aria-label={`Remove ${label}`} onClick={() => onChange(removeStageMove(project, stage.stageId, kind, index))}>×</button>
             </span>
@@ -90,10 +91,10 @@ function FormEditor({ form, project, stage, onChange }) {
         <label>Key<EnumInput aria-label={`${form.name} form key`} value={form.key} options={FORM_KEY_OPTIONS} onChange={event => update({ key: event.target.value })} /></label>
         <label>Asset variant<EnumInput aria-label={`${form.name} asset variant`} value={form.assetVariant || ''} options={FORM_KEY_OPTIONS} placeholder="mega" onChange={event => update({ assetVariant: event.target.value })} /></label>
         <label>Change item<EnumInput aria-label={`${form.name} change item`} value={form.changeItem || ''} options={EVOLUTION_ITEM_OPTIONS} placeholder="MEGA_BRACELET" onChange={event => update({ changeItem: event.target.value })} /></label>
-        <label>Primary ability<EnumInput aria-label={`${form.name} primary ability`} value={form.abilities?.[0] || ''} options={ABILITY_OPTIONS} placeholder="BLAZE" onChange={event => updateAbility(0, event.target.value)} /></label>
-        <label>Secondary ability<EnumInput aria-label={`${form.name} secondary ability`} value={form.abilities?.[1] || ''} options={ABILITY_OPTIONS} placeholder="Optional" onChange={event => updateAbility(1, event.target.value)} /></label>
-        <label>Hidden ability<EnumInput aria-label={`${form.name} hidden ability`} value={form.abilities?.[2] || ''} options={ABILITY_OPTIONS} placeholder="Optional" onChange={event => updateAbility(2, event.target.value)} /></label>
-        <label>Passive<EnumInput aria-label={`${form.name} passive`} value={form.passive || ''} options={ABILITY_OPTIONS} placeholder="Optional" onChange={event => update({ passive: event.target.value })} /></label>
+        <label>Primary ability<EnumInput aria-label={`${form.name} primary ability`} value={form.abilities?.[0] || ''} options={ABILITY_OPTIONS} metadata={ABILITY_METADATA} placeholder="BLAZE" onChange={event => updateAbility(0, event.target.value)} /></label>
+        <label>Secondary ability<EnumInput aria-label={`${form.name} secondary ability`} value={form.abilities?.[1] || ''} options={ABILITY_OPTIONS} metadata={ABILITY_METADATA} placeholder="Optional" onChange={event => updateAbility(1, event.target.value)} /></label>
+        <label>Hidden ability<EnumInput aria-label={`${form.name} hidden ability`} value={form.abilities?.[2] || ''} options={ABILITY_OPTIONS} metadata={ABILITY_METADATA} placeholder="Optional" onChange={event => updateAbility(2, event.target.value)} /></label>
+        <label>Passive<EnumInput aria-label={`${form.name} passive`} value={form.passive || ''} options={ABILITY_OPTIONS} metadata={ABILITY_METADATA} placeholder="Optional" onChange={event => update({ passive: event.target.value })} /></label>
         <label>Primary type<select value={primaryType} onChange={event => update({ types: [event.target.value, secondaryType].filter(Boolean) })}>{TYPES.map(type => <option key={type}>{type}</option>)}</select></label>
         <label>Secondary type<select value={secondaryType} onChange={event => update({ types: [primaryType, event.target.value].filter(Boolean) })}><option value="">None</option>{TYPES.map(type => <option key={type} disabled={type === primaryType}>{type}</option>)}</select></label>
         <label className="form-checkbox"><input type="checkbox" checked={form.isStarterSelectable !== false} onChange={event => update({ isStarterSelectable: event.target.checked })} /> Starter-selectable form</label>
@@ -135,7 +136,7 @@ export function MoveFormEditor({ project, stage, onChange }) {
     <div className="authoring-section">
       <div className="section-heading">
         <div><span className="panel-kicker">Learnset and variants</span><h2>Moves & forms</h2></div>
-        <p>Select known enum IDs from the searchable menus or enter a newer checkout-specific symbol. Review validates every symbol before delivery.</p>
+        <p>Search by enum ID, then review the in-game name and effect before adding it. New checkout-specific symbols remain available as free-form entries and are validated during Review.</p>
       </div>
       <div className="move-grid">
         <MoveList title="Level-up" kind="levelUp" entries={stage.moves?.levelUp || []} project={project} stage={stage} onChange={onChange} />

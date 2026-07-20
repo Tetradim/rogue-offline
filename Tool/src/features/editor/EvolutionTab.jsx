@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { removeEvolutionEdge, upsertEvolutionEdge } from '../../../shared/project-authoring.js'
+import { MOVE_METADATA } from '../../enum-metadata.generated.js'
 import { EVOLUTION_ITEM_OPTIONS, MOVE_OPTIONS } from '../../options.generated.js'
 import { EnumInput } from './EnumInput.jsx'
 
@@ -26,7 +27,7 @@ function RequirementValue({ type, value, onChange }) {
   if (type === 'level') return <input aria-label="Requirement value" type="number" min="1" max="100" value={value} onChange={onChange} />
   if (type === 'friendship') return <input aria-label="Requirement value" type="number" min="1" max="255" value={value} onChange={onChange} />
   if (type === 'item') return <EnumInput aria-label="Requirement value" value={value} options={EVOLUTION_ITEM_OPTIONS} placeholder="FIRE_STONE" onChange={onChange} />
-  if (type === 'move') return <EnumInput aria-label="Requirement value" value={value} options={MOVE_OPTIONS} placeholder="ANCIENT_POWER" onChange={onChange} />
+  if (type === 'move') return <EnumInput aria-label="Requirement value" value={value} options={MOVE_OPTIONS} metadata={MOVE_METADATA} placeholder="ANCIENT_POWER" onChange={onChange} />
   if (type === 'time') return <EnumInput aria-label="Requirement value" value={value} options={TIME_OF_DAY_OPTIONS} placeholder="DAY" onChange={onChange} />
   return <input aria-label="Requirement value" value={value} placeholder="Describe the custom requirement" onChange={onChange} />
 }
