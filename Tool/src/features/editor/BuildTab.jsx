@@ -1,5 +1,6 @@
-import { calculateBst, setStageField, setStageStat } from '../../../shared/project-schema.js'
 import { token } from '../../../shared/project-authoring.js'
+import { calculateBst, setStageField, setStageStat } from '../../../shared/project-schema.js'
+import { ABILITY_METADATA } from '../../enum-metadata.generated.js'
 import { ABILITY_OPTIONS } from '../../options.generated.js'
 import { EnumInput } from './EnumInput.jsx'
 import { MoveFormEditor } from './MoveFormEditor.jsx'
@@ -65,10 +66,10 @@ export function BuildTab({ project, stage, onChange }) {
 
         <section className="editor-card battle-card">
           <div className="card-heading"><h2>Battle data</h2><span className="card-accent blue">Core</span></div>
-          <label>Primary ability<EnumInput aria-label="Primary ability" value={stage.abilities[0] || ''} options={ABILITY_OPTIONS} placeholder="BLAZE" onChange={event => updateAbility(0, event.target.value)} /></label>
-          <label>Secondary ability<EnumInput aria-label="Secondary ability" value={stage.abilities[1] || ''} options={ABILITY_OPTIONS} placeholder="Optional" onChange={event => updateAbility(1, event.target.value)} /></label>
-          <label>Hidden ability<EnumInput aria-label="Hidden ability" value={stage.abilities[2] || ''} options={ABILITY_OPTIONS} placeholder="Optional" onChange={event => updateAbility(2, event.target.value)} /></label>
-          <label>Passive<EnumInput aria-label="Passive" value={stage.passive} options={ABILITY_OPTIONS} placeholder="Optional passive" onChange={event => updateField('passive', token(event.target.value))} /></label>
+          <label>Primary ability<EnumInput aria-label="Primary ability" value={stage.abilities[0] || ''} options={ABILITY_OPTIONS} metadata={ABILITY_METADATA} placeholder="BLAZE" onChange={event => updateAbility(0, event.target.value)} /></label>
+          <label>Secondary ability<EnumInput aria-label="Secondary ability" value={stage.abilities[1] || ''} options={ABILITY_OPTIONS} metadata={ABILITY_METADATA} placeholder="Optional" onChange={event => updateAbility(1, event.target.value)} /></label>
+          <label>Hidden ability<EnumInput aria-label="Hidden ability" value={stage.abilities[2] || ''} options={ABILITY_OPTIONS} metadata={ABILITY_METADATA} placeholder="Optional" onChange={event => updateAbility(2, event.target.value)} /></label>
+          <label>Passive<EnumInput aria-label="Passive" value={stage.passive} options={ABILITY_OPTIONS} metadata={ABILITY_METADATA} placeholder="Optional passive" onChange={event => updateField('passive', token(event.target.value))} /></label>
           <div className="field-pair">
             <label>Height (m)<input type="number" min="0.1" max="9999" step="0.1" value={stage.height} onChange={event => updateField('height', Number(event.target.value))} /></label>
             <label>Weight (kg)<input type="number" min="0.1" max="999999" step="0.1" value={stage.weight} onChange={event => updateField('weight', Number(event.target.value))} /></label>
