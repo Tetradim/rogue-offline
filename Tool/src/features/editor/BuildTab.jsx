@@ -1,4 +1,7 @@
 import { calculateBst, setStageField, setStageStat } from '../../../shared/project-schema.js'
+import { token } from '../../../shared/project-authoring.js'
+import { ABILITY_OPTIONS } from '../../options.generated.js'
+import { EnumInput } from './EnumInput.jsx'
 import { MoveFormEditor } from './MoveFormEditor.jsx'
 import { StatSlider } from './StatSlider.jsx'
 
@@ -13,10 +16,6 @@ const STATS = [
   ['speed', 'Speed'],
 ]
 
-function token(value) {
-  return value.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-}
-
 function normalizedSlug(value) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 }
@@ -25,6 +24,12 @@ export function BuildTab({ project, stage, onChange }) {
   const updateField = (name, value) => onChange(setStageField(project, stage.stageId, name, value))
   const updateFlag = (name, checked) => updateField('flags', { ...stage.flags, [name]: checked })
   const genderless = Boolean(stage.flags?.genderless)
+
+  function updateAbility(index, value) {
+    const abilities = [stage.abilities?.[0] || '', stage.abilities?.[1] || '', stage.abilities?.[2] || '']
+    abilities[index] = token(value)
+    updateField('abilities', abilities.filter(Boolean))
+  }
 
   function updatePrimaryType(primaryType) {
     const secondaryType = stage.types[1] === primaryType ? undefined : stage.types[1]
@@ -60,10 +65,10 @@ export function BuildTab({ project, stage, onChange }) {
 
         <section className="editor-card battle-card">
           <div className="card-heading"><h2>Battle data</h2><span className="card-accent blue">Core</span></div>
-          <label>Primary ability<input value={stage.abilities[0] || ''} placeholder="BLAZE" onChange={event => updateField('abilities', event.target.value ? [token(event.target.value), ...stage.abilities.slice(1)] : stage.abilities.slice(1))} /></label>
-          <label>Secondary ability<input value={stage.abilities[1] || ''} placeholder="Optional" onChange={event => updateField('abilities', [stage.abilities[0], token(event.target.value), stage.abilities[2]].filter(Boolean))} /></label>
-          <label>Hidden ability<input value={stage.abilities[2] || ''} placeholder="Optional" onChange={event => updateField('abilities', [stage.abilities[0], stage.abilities[1], token(event.target.value)].filter(Boolean))} /></label>
-          <label>Passive<input value={stage.passive} placeholder="Optional passive" onChange={event => updateField('passive', token(event.target.value))} /></label>
+          <label>Primary ability<EnumInput aria-label="Primary ability" value={stage.abilities[0] || ''} options={ABILITY_OPTIONS} placeholder="BLAZE" onChange={event => updateAbility(0, event.target.value)} /></label>
+          <label>Secondary ability<EnumInput aria-label="Secondary ability" value={stage.abilities[1] || ''} options={ABILITY_OPTIONS} placeholder="Optional" onChange={event => updateAbility(1, event.target.value)} /></label>
+          <label>Hidden ability<EnumInput aria-label="Hidden ability" value={stage.abilities[2] || ''} options={ABILITY_OPTIONS} placeholder="Optional" onChange={event => updateAbility(2, event.target.value)} /></label>
+          <label>Passive<EnumInput aria-label="Passive" value={stage.passive} options={ABILITY_OPTIONS} placeholder="Optional passive" onChange={event => updateField('passive', token(event.target.value))} /></label>
           <div className="field-pair">
             <label>Height (m)<input type="number" min="0.1" max="9999" step="0.1" value={stage.height} onChange={event => updateField('height', Number(event.target.value))} /></label>
             <label>Weight (kg)<input type="number" min="0.1" max="999999" step="0.1" value={stage.weight} onChange={event => updateField('weight', Number(event.target.value))} /></label>
