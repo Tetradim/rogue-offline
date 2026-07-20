@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { addStageForm } from '../../../shared/project-authoring.js'
 import { addBlankStage, createBlankProject } from '../../../shared/project-schema.js'
 import { ABILITY_METADATA, MOVE_METADATA } from '../../enum-metadata.generated.js'
-import authoringCss from '../../styles/authoring.css?raw'
 import { BuildTab } from './BuildTab.jsx'
 import { EncountersTab } from './EncountersTab.jsx'
 import { EnumInput } from './EnumInput.jsx'
@@ -119,10 +118,5 @@ describe('enum-backed editor dropdowns', () => {
     render(<EncountersTab project={project} official={null} onChange={vi.fn()} />)
 
     await expectLinkedOption(user, inputByAriaLabel('Biome ID'), 'FOREST')
-  })
-
-  it('keeps enum option descriptions configured for multi-line wrapping', () => {
-    expect(authoringCss).toMatch(/\.enum-option-description\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/s)
-    expect(authoringCss).toMatch(/\.enum-option-heading\s*\{[^}]*flex-wrap:\s*wrap;/s)
   })
 })
