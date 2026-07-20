@@ -33,7 +33,7 @@ jobs:
 
       - name: Commit generated metadata
         run: |
-          if git diff --quiet -- Tool/src/enum-metadata.generated.js; then
+          if [ -z "$(git status --porcelain -- Tool/src/enum-metadata.generated.js)" ]; then
             echo 'Generated metadata is already current.'
             exit 0
           fi
