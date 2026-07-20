@@ -28,7 +28,7 @@ describe('Windows launcher syntax', () => {
     expect(script).toMatch(/exit 0\s*$/)
   })
 
-  it('derives the updater tool root from the launcher's working directory', async () => {
+  it('derives the updater tool root from the launcher working directory', async () => {
     const batch = await readFile(path.join(rootDir, 'Launch-Updating.bat'), 'utf8')
     expect(batch).toMatch(/cd \/d "%~dp0"/)
     expect(batch).toMatch(/powershell\.exe[^\r\n]+-File "!PRMS_TEMP_PS!"\s*$/m)
