@@ -1,9 +1,9 @@
 name: Generate enum description metadata
 
 on:
-  push:
+  pull_request:
     branches:
-      - fix/restore-enum-descriptions
+      - main
     paths:
       - 'Tool/scripts/sync-enum-metadata.mjs'
       - '.github/workflows/generate-enum-metadata.yml'
