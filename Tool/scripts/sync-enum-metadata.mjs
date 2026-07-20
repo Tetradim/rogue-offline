@@ -62,7 +62,7 @@ const [abilities, moves] = await Promise.all([
 
 const abilityMetadata = buildMetadata(ABILITY_OPTIONS, abilities, 'description', 'Ability')
 const moveMetadata = buildMetadata(MOVE_OPTIONS, moves, 'effect', 'Move')
-const banner = `// Generated from pagefaultgames/pokerogue-locales at ${LOCALE_COMMIT}.\n// Run \`npm run sync:enum-metadata\` to refresh. Do not edit by hand.\n`
+const banner = `// Generated from pagefaultgames/pokerogue-locales at ${LOCALE_COMMIT}.\n// Sources: en/ability.json descriptions and en/move.json effects.\n// Run \`npm run sync:enum-metadata\` to refresh. Do not edit by hand.\n`
 const source = `${banner}\nexport const ABILITY_METADATA = ${JSON.stringify(abilityMetadata, null, 2)}\n\nexport const MOVE_METADATA = ${JSON.stringify(moveMetadata, null, 2)}\n`
 
 await writeFile(outputPath, source, 'utf8')
