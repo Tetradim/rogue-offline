@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -76,6 +76,8 @@ describe('Windows launcher syntax', () => {
     )
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
-    expect(path.resolve(result.stdout.trim())).toBe(path.resolve(directory))
+    const actual = (await realpath(result.stdout.trim())).toLowerCase()
+    const expected = (await realpath(directory)).toLowerCase()
+    expect(actual).toBe(expected)
   }, 20_000)
 })
