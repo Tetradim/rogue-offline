@@ -1,4 +1,5 @@
 // Generated from pagefaultgames/pokerogue-locales at 7ac925063b91cfb58eaaddf5a3b9c8c8e87d1e43.
+// Sources: en/ability.json descriptions and en/move.json effects.
 // Run `npm run sync:enum-metadata` to refresh. Do not edit by hand.
 
 export const ABILITY_METADATA = {
