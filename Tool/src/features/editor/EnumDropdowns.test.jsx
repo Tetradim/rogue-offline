@@ -23,14 +23,14 @@ describe('enum-backed editor dropdowns', () => {
 
     render(<BuildTab project={project} stage={stage} onChange={vi.fn()} />)
 
-    expectLinkedOption(screen.getByLabelText('Primary ability'), 'BLAZE')
-    expectLinkedOption(screen.getByLabelText('Passive'), 'SOLAR_POWER')
-    expectLinkedOption(screen.getByLabelText('Level-up move ID'), 'EMBER')
-    expectLinkedOption(screen.getByLabelText('TM pool move ID'), 'THUNDERBOLT')
-    expectLinkedOption(screen.getByLabelText('Egg moves move ID'), 'ANCIENT_POWER')
-    expectLinkedOption(screen.getByLabelText('Mega form key'), 'mega')
-    expectLinkedOption(screen.getByLabelText('Mega primary ability'), 'BLAZE')
-    expectLinkedOption(screen.getByLabelText('Mega change item'), 'FIRE_STONE')
+    expectLinkedOption(screen.getByLabelText(/^Primary ability$/), 'BLAZE')
+    expectLinkedOption(screen.getByLabelText(/^Passive$/), 'SOLAR_POWER')
+    expectLinkedOption(screen.getByLabelText(/^Level-up move ID$/), 'EMBER')
+    expectLinkedOption(screen.getByLabelText(/^TM pool move ID$/), 'THUNDERBOLT')
+    expectLinkedOption(screen.getByLabelText(/^Egg moves move ID$/), 'ANCIENT_POWER')
+    expectLinkedOption(screen.getByLabelText(/^Mega form key$/), 'mega')
+    expectLinkedOption(screen.getByLabelText(/^Mega primary ability$/), 'BLAZE')
+    expectLinkedOption(screen.getByLabelText(/^Mega change item$/), 'FIRE_STONE')
   })
 
   it('changes the evolution requirement control to the matching enum catalog', async () => {
@@ -39,14 +39,14 @@ describe('enum-backed editor dropdowns', () => {
 
     render(<EvolutionTab project={project} activeStage={project.stages[0]} onChange={vi.fn()} />)
 
-    await user.selectOptions(screen.getByLabelText('Requirement'), 'item')
-    expectLinkedOption(screen.getByLabelText('Requirement value'), 'FIRE_STONE')
+    await user.selectOptions(screen.getByLabelText(/^Requirement$/), 'item')
+    expectLinkedOption(screen.getByLabelText(/^Requirement value$/), 'FIRE_STONE')
 
-    await user.selectOptions(screen.getByLabelText('Requirement'), 'move')
-    expectLinkedOption(screen.getByLabelText('Requirement value'), 'ANCIENT_POWER')
+    await user.selectOptions(screen.getByLabelText(/^Requirement$/), 'move')
+    expectLinkedOption(screen.getByLabelText(/^Requirement value$/), 'ANCIENT_POWER')
 
-    await user.selectOptions(screen.getByLabelText('Requirement'), 'time')
-    expectLinkedOption(screen.getByLabelText('Requirement value'), 'DAY')
+    await user.selectOptions(screen.getByLabelText(/^Requirement$/), 'time')
+    expectLinkedOption(screen.getByLabelText(/^Requirement value$/), 'DAY')
   })
 
   it('links encounter biome authoring to the biome catalog', () => {
@@ -54,6 +54,6 @@ describe('enum-backed editor dropdowns', () => {
 
     render(<EncountersTab project={project} official={null} onChange={vi.fn()} />)
 
-    expectLinkedOption(screen.getByLabelText('Biome ID'), 'FOREST')
+    expectLinkedOption(screen.getByLabelText(/^Biome ID$/), 'FOREST')
   })
 })
