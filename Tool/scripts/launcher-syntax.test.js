@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -28,6 +28,13 @@ describe('Windows launcher syntax', () => {
     expect(script).toMatch(/exit 0\s*$/)
   })
 
+  it('derives the updater tool root from the launcher working directory', async () => {
+    const batch = await readFile(path.join(rootDir, 'Launch-Updating.bat'), 'utf8')
+    expect(batch).toMatch(/cd \/d "%~dp0"/)
+    expect(batch).toMatch(/powershell\.exe[^\r\n]+-File "!PRMS_TEMP_PS!"\s*$/m)
+    expect(batch).not.toMatch(/-ToolPath\s+"%~dp0"/)
+  })
+
   const windowsIt = process.platform === 'win32' ? it : it.skip
   windowsIt('parses the embedded updater with Windows PowerShell', async () => {
     const batch = await readFile(path.join(rootDir, 'Launch-Updating.bat'), 'utf8')
@@ -49,5 +56,28 @@ describe('Windows launcher syntax', () => {
     })
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
+  }, 20_000)
+
+  windowsIt('resolves a Tool path containing spaces without a quoted trailing-backslash argument', async () => {
+    const batch = await readFile(path.join(rootDir, 'Launch-Updating.bat'), 'utf8')
+    const directory = await mkdtemp(path.join(tmpdir(), 'pokerogue launcher path '))
+    cleanups.push(() => rm(directory, { recursive: true, force: true }))
+    const scriptFile = path.join(directory, 'updater.ps1')
+    await writeFile(scriptFile, embeddedPowerShell(batch), 'utf8')
+
+    const result = spawnSync(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptFile, '-ValidateToolPathOnly'],
+      {
+        cwd: directory,
+        encoding: 'utf8',
+        windowsHide: true,
+      },
+    )
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
+    const actual = (await realpath(result.stdout.trim())).toLowerCase()
+    const expected = (await realpath(directory)).toLowerCase()
+    expect(actual).toBe(expected)
   }, 20_000)
 })

@@ -18,7 +18,7 @@ title PokeRogue Mod Studio - Updating Launcher
     if errorlevel 1 (
         set "UPDATE_CODE=1"
     ) else (
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "!PRMS_TEMP_PS!" -ToolPath "%~dp0"
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "!PRMS_TEMP_PS!"
         set "UPDATE_CODE=!errorlevel!"
     )
 
@@ -36,8 +36,7 @@ title PokeRogue Mod Studio - Updating Launcher
 
 :__PRMS_POWERSHELL__
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$ToolPath
+    [switch]$ValidateToolPathOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,7 +47,11 @@ $repoOwner = 'Tetradim'
 $repoName = 'rogue-offline'
 $branch = 'main'
 $headers = @{ 'User-Agent' = 'PokeRogue-Mod-Studio-Updater' }
-$toolRoot = [IO.Path]::GetFullPath($ToolPath).TrimEnd([char[]]'\/')
+$toolRoot = (Resolve-Path -LiteralPath '.').ProviderPath
+if ($ValidateToolPathOnly) {
+    Write-Output $toolRoot
+    exit 0
+}
 $versionFile = Join-Path $toolRoot '.launcher-version'
 $manifestFile = Join-Path $toolRoot '.launcher-update-manifest.json'
 $utf8NoBom = New-Object Text.UTF8Encoding($false)
