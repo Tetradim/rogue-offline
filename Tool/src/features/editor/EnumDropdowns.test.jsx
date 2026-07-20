@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises'
 import { useState } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -6,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { addStageForm } from '../../../shared/project-authoring.js'
 import { addBlankStage, createBlankProject } from '../../../shared/project-schema.js'
 import { ABILITY_METADATA, MOVE_METADATA } from '../../enum-metadata.generated.js'
+import authoringCss from '../../styles/authoring.css?raw'
 import { BuildTab } from './BuildTab.jsx'
 import { EncountersTab } from './EncountersTab.jsx'
 import { EnumInput } from './EnumInput.jsx'
@@ -112,7 +112,7 @@ describe('enum-backed editor dropdowns', () => {
     await expectLinkedOption(user, inputByAriaLabel('Requirement value'), 'DAY')
   })
 
-  it('links encounter biome authoring to the biome catalog', async () => {
+  it('links encounter biome authoring to the biome catalog even when another biome is selected', async () => {
     const user = userEvent.setup()
     const project = createBlankProject({ name: 'Emberline' })
 
@@ -121,9 +121,8 @@ describe('enum-backed editor dropdowns', () => {
     await expectLinkedOption(user, inputByAriaLabel('Biome ID'), 'FOREST')
   })
 
-  it('keeps enum option descriptions configured for multi-line wrapping', async () => {
-    const css = await readFile(new URL('../../styles/authoring.css', import.meta.url), 'utf8')
-    expect(css).toMatch(/\.enum-option-description\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/s)
-    expect(css).toMatch(/\.enum-option-heading\s*\{[^}]*flex-wrap:\s*wrap;/s)
+  it('keeps enum option descriptions configured for multi-line wrapping', () => {
+    expect(authoringCss).toMatch(/\.enum-option-description\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;/s)
+    expect(authoringCss).toMatch(/\.enum-option-heading\s*\{[^}]*flex-wrap:\s*wrap;/s)
   })
 })
