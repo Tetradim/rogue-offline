@@ -1,7 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
-const MAX_VISIBLE_OPTIONS = 80
-
 function normalizeOptions(options) {
   return [...new Set((options || []).filter(value => typeof value === 'string' && value.length))]
 }
@@ -47,12 +45,10 @@ export function EnumInput({
   const resolvedDescribedBy = [describedBy, selectedMetadata ? descriptionId : null].filter(Boolean).join(' ') || undefined
   const query = String(value || '').trim().toLowerCase()
 
-  const matchingOptions = useMemo(() => normalizedOptions
+  const visibleOptions = useMemo(() => normalizedOptions
     .map((option, index) => ({ option, index, rank: optionRank(option, metadata[option], query) }))
     .filter(entry => Number.isFinite(entry.rank))
     .sort((left, right) => left.rank - right.rank || left.index - right.index), [metadata, normalizedOptions, query])
-
-  const visibleOptions = matchingOptions.slice(0, MAX_VISIBLE_OPTIONS)
 
   useEffect(() => {
     setActiveIndex(visibleOptions.length ? 0 : -1)
@@ -103,7 +99,7 @@ export function EnumInput({
       <input
         {...inputProps}
         ref={inputRef}
-        value={value}
+        value={value || ''}
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={open}
@@ -157,9 +153,6 @@ export function EnumInput({
             )
           })}
           {!visibleOptions.length && <div className="enum-options-empty">No matching known values. You can still enter a custom enum ID.</div>}
-          {matchingOptions.length > visibleOptions.length && (
-            <div className="enum-options-more">Showing the first {MAX_VISIBLE_OPTIONS} matches. Keep typing to narrow the list.</div>
-          )}
         </div>
       )}
       {selectedMetadata && (
