@@ -39,11 +39,12 @@ export function EnumInput({
   const descriptionId = `${resolvedListId}-description`
   const inputRef = useRef(null)
   const [open, setOpen] = useState(false)
+  const [filterQuery, setFilterQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(-1)
   const normalizedOptions = useMemo(() => normalizeOptions(options), [options])
   const selectedMetadata = metadata[normalizeToken(value)] || null
   const resolvedDescribedBy = [describedBy, selectedMetadata ? descriptionId : null].filter(Boolean).join(' ') || undefined
-  const query = String(value || '').trim().toLowerCase()
+  const query = filterQuery.trim().toLowerCase()
 
   const visibleOptions = useMemo(() => normalizedOptions
     .map((option, index) => ({ option, index, rank: optionRank(option, metadata[option], query) }))
@@ -63,6 +64,7 @@ export function EnumInput({
 
   function selectOption(option) {
     emitValue(option)
+    setFilterQuery('')
     setOpen(false)
     inputRef.current?.focus()
   }
@@ -74,22 +76,25 @@ export function EnumInput({
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setOpen(true)
+      if (!visibleOptions.length) return setActiveIndex(-1)
       setActiveIndex(index => Math.min(Math.max(index, -1) + 1, visibleOptions.length - 1))
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
       setOpen(true)
-      setActiveIndex(index => index <= 0 ? Math.max(visibleOptions.length - 1, 0) : index - 1)
-    } else if (event.key === 'Home' && open) {
+      if (!visibleOptions.length) return setActiveIndex(-1)
+      setActiveIndex(index => index <= 0 ? visibleOptions.length - 1 : index - 1)
+    } else if (event.key === 'Home' && open && visibleOptions.length) {
       event.preventDefault()
       setActiveIndex(0)
-    } else if (event.key === 'End' && open) {
+    } else if (event.key === 'End' && open && visibleOptions.length) {
       event.preventDefault()
-      setActiveIndex(Math.max(visibleOptions.length - 1, 0))
+      setActiveIndex(visibleOptions.length - 1)
     } else if (event.key === 'Enter' && open && activeIndex >= 0 && visibleOptions[activeIndex]) {
       event.preventDefault()
       selectOption(visibleOptions[activeIndex].option)
     } else if (event.key === 'Escape' && open) {
       event.preventDefault()
+      setFilterQuery('')
       setOpen(false)
     }
   }
@@ -110,12 +115,16 @@ export function EnumInput({
         title={title || selectedMetadata?.description}
         onChange={event => {
           emitValue(event.target.value)
+          setFilterQuery(event.target.value)
           setOpen(true)
           setActiveIndex(0)
         }}
         onFocus={event => {
           onFocus?.(event)
-          if (!event.defaultPrevented && !inputProps.disabled) setOpen(true)
+          if (!event.defaultPrevented && !inputProps.disabled) {
+            setFilterQuery('')
+            setOpen(true)
+          }
         }}
         onClick={event => {
           onClick?.(event)
@@ -123,6 +132,7 @@ export function EnumInput({
         }}
         onBlur={event => {
           onBlur?.(event)
+          setFilterQuery('')
           setOpen(false)
         }}
         onKeyDown={handleKeyDown}
